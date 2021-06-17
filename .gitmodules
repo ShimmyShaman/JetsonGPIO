@@ -1,0 +1,3 @@
+[submodule "src/jetcam"]
+	path = src/jetcam
+	url = https://github.com/shimmyshaman/jetcam

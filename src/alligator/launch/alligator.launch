@@ -1,0 +1,6 @@
+<launch>
+
+  <node pkg="jetcam" name="jetcam_capture_node" type="image_publisher">
+  </node>
+
+</launch>

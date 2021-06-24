@@ -1,6 +1,10 @@
 <launch>
 
-  <node pkg="jetcam" name="jetcam_capture_node" type="image_publisher">
+  <node pkg="jetcam" name="jetcam_capture_node" type="image_publisher"/>
+
+  <node pkg="image_view" name="image_saver_node" type="image_saver">
+    <param name="image" value="/jetcam/image"/>
+    <param name="save_all_image" value="/home/boo/proj/roscol/captures/img%04i.%s"/>
   </node>
 
 </launch>

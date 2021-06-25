@@ -83,7 +83,7 @@
   </gazebo>
 
   <!-- hokuyo -->
-  <gazebo reference="hokuyo">
+  <!-- <gazebo reference="hokuyo">
     <sensor type="gpu_ray" name="head_hokuyo_sensor">
       <pose>0 0 0 0 0 0</pose>
       <visualize>false</visualize>
@@ -117,6 +117,6 @@
         <frameName>hokuyo</frameName>
       </plugin> -->
     </sensor>
-  </gazebo>
+  </gazebo> -->
 
 </robot>

@@ -1,0 +1,3 @@
+[submodule "src/alligator/src/JetsonNanoRadiohead"]
+	path = src/alligator/src/JetsonNanoRadiohead
+	url = https://github.com/ShimmyShaman/JetsonNanoRadiohead.git

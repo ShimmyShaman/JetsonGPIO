@@ -152,9 +152,27 @@ include_directories(
 #   ${catkin_LIBRARIES}
 # )
 
-add_executable(object_detector src/object_detector.cpp src/ros_compat.cpp)
-target_link_libraries(object_detector ${catkin_LIBRARIES} )
-add_dependencies(object_detector jetcam_gencpp)
+set(JNR_SOURCES
+    src/JetsonNanoRadiohead/RH_NRF24.cpp
+    src/JetsonNanoRadiohead/RHGenericDriver.cpp
+    src/JetsonNanoRadiohead/RHGenericSPI.cpp
+    src/JetsonNanoRadiohead/RHHardwareSPI.cpp
+    src/JetsonNanoRadiohead/RHNRFSPIDriver.cpp
+    src/JetsonNanoRadiohead/RHutil/JetsonNano.cpp
+    src/JetsonNanoRadiohead/RHutil/JetsonNanoSPI.cpp
+    src/JetsonNanoRadiohead/RHutil/JetsonNano_gpio.cpp)
+
+add_library(jetson_nano_radiohead ${JNR_SOURCES} )
+target_include_directories(jetson_nano_radiohead PUBLIC src/JetsonNanoRadiohead )
+# target_link_libraries(jetson_nano_radiohead ${catkin_LIBRARIES} )
+
+# add_executable(object_detector src/object_detector.cpp src/ros_compat.cpp)
+# target_link_libraries(object_detector ${catkin_LIBRARIES} ) 
+# # add_dependencies(object_detector alligator_gencpp)
+
+add_executable(rf_receiver src/rf_receiver.cpp )
+target_link_libraries(rf_receiver ${catkin_LIBRARIES} jetson_nano_radiohead )
+# add_dependencies(rf_receiver alligator_gencpp)
 
 #############
 ## Install ##

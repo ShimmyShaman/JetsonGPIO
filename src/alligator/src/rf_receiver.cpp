@@ -18,12 +18,6 @@
 #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
 // #include "RH_NRF24.h"
 
-// SECTION
-// This section must be kept in sync between the Nano-side Collector App and the
-// jsapp
-#define SIG_LEN 3
-uint8_t signature[] = {113, 176, 87};
-
 // #define GPIO_LIFT 149
 // #define GPIO_ROTATER 200
 // #define GPIO_APWR 168
@@ -31,27 +25,31 @@ uint8_t signature[] = {113, 176, 87};
 // #define GPIO_BPWR 12
 // #define GPIO_BDIR 76
 
-// enum CommunicationType
-// {
-//   COMMUNICATION_NULL = 0,
-//   COMMUNICATION_CONNECT_AUTO,
-//   COMMUNICATION_CONNECT_RCOVER,
-//   COMMUNICATION_NANO_SHUTDOWN,
-//   COMMUNICATION_SPEED_SET_1,
-//   COMMUNICATION_SPEED_SET_2,
-//   COMMUNICATION_SPEED_SET_3,
-//   COMMUNICATION_SPEED_SET_4,
-//   COMMUNICATION_SPEED_SET_5,
-//   COMMUNICATION_RCMOVE,
-// };
+// SECTION
+// This section must be kept in sync between the Nano-side Collector App and the
+// jsapp
+#define SIG_LEN 3
+uint8_t signature[] = {113, 176, 87};
 
-// enum ControllerModeType
-// {
-//   CONTROLLER_MODE_NULL = 0,
-//   CONTROLLER_MODE_AUTONOMOUS = 2,
-//   CONTROLLER_MODE_RCOVERRIDE = 5,
-// };
-// // END-SECTION
+enum CommunicationType {
+  COMMUNICATION_NULL = 0,
+  COMMUNICATION_CONNECT_AUTO,
+  COMMUNICATION_CONNECT_RCOVER,
+  COMMUNICATION_NANO_SHUTDOWN,
+  COMMUNICATION_SPEED_SET_1,
+  COMMUNICATION_SPEED_SET_2,
+  COMMUNICATION_SPEED_SET_3,
+  COMMUNICATION_SPEED_SET_4,
+  COMMUNICATION_SPEED_SET_5,
+  COMMUNICATION_RCMOVE,
+};
+
+enum ControllerModeType {
+  CONTROLLER_MODE_NULL = 0,
+  CONTROLLER_MODE_AUTONOMOUS = 2,
+  CONTROLLER_MODE_RCOVERRIDE = 5,
+};
+// END-SECTION
 
 // #define MOTOR_SET_SPEED_1 100 //1
 // #define MOTOR_SET_SPEED_2 200 //6
@@ -282,78 +280,76 @@ void loop()
       }
       if (verified) {
         ROS_INFO("Verified Communication Received");
-        // enum CommunicationType ct = (enum CommunicationType)buf[SIG_LEN];
+        enum CommunicationType ct = (enum CommunicationType)buf[SIG_LEN];
 
-        // bool replyComConfirm = true;
-        // switch (ct)
-        // {
-        // case COMMUNICATION_CONNECT_AUTO:
-        //   changeMode(CONTROLLER_MODE_AUTONOMOUS);
-        //   puts("CONNECT_AUTO");
-        //   break;
-        // case COMMUNICATION_CONNECT_RCOVER:
-        //   changeMode(CONTROLLER_MODE_RCOVERRIDE);
-        //   puts("CONNECT_RCOVER");
-        //   break;
-        // case COMMUNICATION_RCMOVE:
-        // {
-        //   changeMode(CONTROLLER_MODE_RCOVERRIDE);
+        bool replyComConfirm = true;
+        switch (ct) {
+          case COMMUNICATION_CONNECT_AUTO:
+            // changeMode(CONTROLLER_MODE_AUTONOMOUS);
+            puts("CONNECT_AUTO");
+            break;
+          case COMMUNICATION_CONNECT_RCOVER:
+            // changeMode(CONTROLLER_MODE_RCOVERRIDE);
+            puts("CONNECT_RCOVER");
+            break;
+          case COMMUNICATION_RCMOVE: {
+            // changeMode(CONTROLLER_MODE_RCOVERRIDE);
 
-        //   // TODO check this is okay with 127 no movement
-        //   motorA.power = ((float)buf[SIG_LEN + 1] - 127.f) / 128.f;
-        //   if (motorA.power < 0)
-        //   {
-        //     motorA.dir = 1;
-        //     motorA.power = -motorA.power;
-        //   }
-        //   else
-        //   {
-        //     motorA.dir = 0;
-        //   }
-        //   motorB.power = ((float)buf[SIG_LEN + 2] - 127.f) / 128.f;
-        //   if (motorB.power < 0)
-        //   {
-        //     motorB.dir = 1;
-        //     motorB.power = -motorB.power;
-        //   }
-        //   else
-        //   {
-        //     motorB.dir = 0;
-        //   }
+            // // TODO check this is okay with 127 no movement
+            // motorA.power = ((float)buf[SIG_LEN + 1] - 127.f) / 128.f;
+            // if (motorA.power < 0)
+            // {
+            //   motorA.dir = 1;
+            //   motorA.power = -motorA.power;
+            // }
+            // else
+            // {
+            //   motorA.dir = 0;
+            // }
+            // motorB.power = ((float)buf[SIG_LEN + 2] - 127.f) / 128.f;
+            // if (motorB.power < 0)
+            // {
+            //   motorB.dir = 1;
+            //   motorB.power = -motorB.power;
+            // }
+            // else
+            // {
+            //   motorB.dir = 0;
+            // }
 
-        //   replyComConfirm = false;
-        //   printf("CONNECT_RCMOVE : A[%i, %.3f] B[%i, %.3f]\n", motorA.dir, motorA.power, motorB.dir, motorB.power);
-        // }
-        // break;
-        // case COMMUNICATION_NANO_SHUTDOWN:
-        //   puts("TODO -- Nano Shutdown");
-        //   break;
-        // case COMMUNICATION_SPEED_SET_1:
-        //   maxSpeed = MOTOR_SET_SPEED_1;
-        //   puts("Speed Set to MOTOR_SET_SPEED_1");
-        //   break;
-        // case COMMUNICATION_SPEED_SET_2:
-        //   maxSpeed = MOTOR_SET_SPEED_2;
-        //   puts("Speed Set to MOTOR_SET_SPEED_2");
-        //   break;
-        // case COMMUNICATION_SPEED_SET_3:
-        //   maxSpeed = MOTOR_SET_SPEED_3;
-        //   puts("Speed Set to MOTOR_SET_SPEED_3");
-        //   break;
-        // case COMMUNICATION_SPEED_SET_4:
-        //   maxSpeed = MOTOR_SET_SPEED_4;
-        //   puts("Speed Set to MOTOR_SET_SPEED_4");
-        //   break;
-        // case COMMUNICATION_SPEED_SET_5:
-        //   maxSpeed = MOTOR_SET_SPEED_5;
-        //   puts("Speed Set to MOTOR_SET_SPEED_5");
-        //   break;
-        // default:
-        //   printf("Unrecognised Verified Communication:'%s'\n", buf + SIG_LEN);
-        //   break;
-        // }
-        // if (replyComConfirm)
-        {
+            // TODO -- Not sending a packet uid to verify -- make it cleaner
+            // replyComConfirm = false;
+            printf("CONNECT_RCMOVE\n");// : A[%i, %.3f] B[%i, %.3f]\n", motorA.dir, motorA.power, motorB.dir,
+            // motorB.power);
+          } break;
+          case COMMUNICATION_NANO_SHUTDOWN:
+            puts("TODO -- Nano Shutdown");
+            break;
+          case COMMUNICATION_SPEED_SET_1:
+            // maxSpeed = MOTOR_SET_SPEED_1;
+            puts("Speed Set to MOTOR_SET_SPEED_1");
+            break;
+          case COMMUNICATION_SPEED_SET_2:
+            // maxSpeed = MOTOR_SET_SPEED_2;
+            puts("Speed Set to MOTOR_SET_SPEED_2");
+            break;
+          case COMMUNICATION_SPEED_SET_3:
+            // maxSpeed = MOTOR_SET_SPEED_3;
+            puts("Speed Set to MOTOR_SET_SPEED_3");
+            break;
+          case COMMUNICATION_SPEED_SET_4:
+            // maxSpeed = MOTOR_SET_SPEED_4;
+            puts("Speed Set to MOTOR_SET_SPEED_4");
+            break;
+          case COMMUNICATION_SPEED_SET_5:
+            // maxSpeed = MOTOR_SET_SPEED_5;
+            puts("Speed Set to MOTOR_SET_SPEED_5");
+            break;
+          default:
+            printf("Unrecognised Verified Communication:'%s'\n", buf + SIG_LEN);
+            break;
+        }
+        if (replyComConfirm) {
           // Send connection confirmation
           uint8_t data[SIG_LEN + 1];
           for (int i = 0; i < SIG_LEN; ++i) {

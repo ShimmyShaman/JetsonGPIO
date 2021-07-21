@@ -18,12 +18,12 @@
 #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
 // #include "RH_NRF24.h"
 
-// #define GPIO_LIFT 149
-// #define GPIO_ROTATER 200
-// #define GPIO_APWR 168
-// #define GPIO_ADIR 51
-// #define GPIO_BPWR 12
-// #define GPIO_BDIR 76
+#define GPIO_LIFT 149
+#define GPIO_ROTATER 200
+#define GPIO_APWR 168
+#define GPIO_ADIR 51
+#define GPIO_BPWR 12
+#define GPIO_BDIR 76
 
 // SECTION
 // This section must be kept in sync between the Nano-side Collector App and the
@@ -35,13 +35,16 @@ enum CommunicationType {
   COMMUNICATION_NULL = 0,
   COMMUNICATION_CONNECT_AUTO,
   COMMUNICATION_CONNECT_RCOVER,
-  COMMUNICATION_NANO_SHUTDOWN,
   COMMUNICATION_SPEED_SET_1,
   COMMUNICATION_SPEED_SET_2,
   COMMUNICATION_SPEED_SET_3,
   COMMUNICATION_SPEED_SET_4,
   COMMUNICATION_SPEED_SET_5,
   COMMUNICATION_RCMOVE,
+  COMMUNICATION_CAPTURE_IMAGE,
+  COMMUNICATION_RECORD_VIDEO,
+  COMMUNICATION_STOP_VIDEO,
+  COMMUNICATION_NANO_SHUTDOWN = 127,
 };
 
 enum ControllerModeType {
@@ -51,125 +54,110 @@ enum ControllerModeType {
 };
 // END-SECTION
 
-// #define MOTOR_SET_SPEED_1 100 //1
-// #define MOTOR_SET_SPEED_2 200 //6
-// #define MOTOR_SET_SPEED_3 400 //36
-// #define MOTOR_SET_SPEED_4 800 //
-// #define MOTOR_SET_SPEED_5 1000
+#define MOTOR_SET_SPEED_1 100 // 1
+#define MOTOR_SET_SPEED_2 200 // 6
+#define MOTOR_SET_SPEED_3 400 // 36
+#define MOTOR_SET_SPEED_4 800 //
+#define MOTOR_SET_SPEED_5 1000
 
-// typedef struct MotorThreadData
-// {
-//   pthread_t tid;
-//   unsigned int drive_gpio, dir_gpio;
-//   int *maxSpeed;
-//   float power; // (0->1)
-//   int dir;
-//   bool doExit;
-//   bool doPause;
-//   bool finished;
-// } MotorThreadData;
+typedef struct MotorThreadData {
+  pthread_t tid;
+  unsigned int drive_gpio, dir_gpio;
+  // int *maxSpeed;
+  float power; // (0->1)
+  int dir;
+  bool doExit;
+  bool doPause;
+  bool finished;
+} MotorThreadData;
 
-// MotorThreadData motorA, motorB;
+MotorThreadData motorA, motorB;
 
-// // Singleton instance of the radio driver
-// // RH_NRF24 nrf24;
-// // RH_NRF24 nrf24(8, 7); // use this to be electrically compatible with Mirf
-// // RH_NRF24 nrf24(8, 10);// For Leonardo, need explicit SS pin
-// // RH_NRF24 nrf24(8, 7); // For RFM73 on Anarduino Mini
+// Singleton instance of the radio driver
 RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
                         // 22, 24 respectively)
 
-// int maxSpeed;
-// enum ControllerModeType cmode;
+int maxSpeed;
+enum ControllerModeType cmode;
 
-// void *motorThread(void *arg)
-// {
-//   MotorThreadData *m = (MotorThreadData *)arg;
+void *motorThread(void *arg)
+{
+  MotorThreadData *m = (MotorThreadData *)arg;
 
-//   int setDir = 99999;
+  int setDir = 99999;
 
-//   unsigned long spupdate = millis();
+  unsigned long spupdate = millis();
 
-//   while (!m->doExit)
-//   {
-//     if (m->doPause)
-//     {
-//       ensure_set_value(m->drive_gpio, 0);
-//       usleep(1000);
-//     }
-//     else
-//     {
-//       // TODO -- stop this from continuing on if main thread collapses
-//       // struct timespec current;
-//       // clock_gettime(CLOCK_REALTIME, &current);
+  while (!m->doExit) {
+    if (m->doPause) {
+      ensure_set_value(m->drive_gpio, 0);
+      usleep(1000);
+    }
+    else {
+      // TODO -- stop this from continuing on if main thread collapses
+      // struct timespec current;
+      // clock_gettime(CLOCK_REALTIME, &current);
 
-//       // if(m->)
-//     }
+      // if(m->)
+    }
 
-//     if (*m->maxSpeed && m->power)
-//     {
-//       if (m->dir != setDir)
-//       {
-//         setDir = m->dir;
-//         ensure_set_value(m->dir_gpio, setDir);
-//       }
+    if (maxSpeed && m->power) {
+      if (m->dir != setDir) {
+        setDir = m->dir;
+        ensure_set_value(m->dir_gpio, setDir);
+      }
 
-//       int mex = (int)(m->power * *m->maxSpeed);
+      int mex = (int)(m->power * maxSpeed);
 
-//       if (millis() - spupdate > 1000)
-//       {
-//         spupdate = millis();
-//         //printf("mex=%i\n", mex);
-//       }
+      if (millis() - spupdate > 1000) {
+        spupdate = millis();
+        // printf("mex=%i\n", mex);
+      }
 
-//       ensure_set_value(m->drive_gpio, 1);
-//       usleep(mex);
-//       if (mex < 1000)
-//       {
-//         ensure_set_value(m->drive_gpio, 0);
-//         usleep(1000 - mex);
-//       }
-//       else
-//       {
-//         continue;
-//       }
-//     }
-//     else
-//       ensure_set_value(m->drive_gpio, 0);
-//   }
+      ensure_set_value(m->drive_gpio, 1);
+      usleep(mex);
+      if (mex < 1000) {
+        ensure_set_value(m->drive_gpio, 0);
+        usleep(1000 - mex);
+      }
+      else {
+        continue;
+      }
+    }
+    else
+      ensure_set_value(m->drive_gpio, 0);
+  }
 
-//   ensure_set_value(m->drive_gpio, 0);
-//   m->finished = true;
-//   puts("thread-closed");
-//   pthread_exit(NULL);
-// }
+  ensure_set_value(m->drive_gpio, 0);
+  m->finished = true;
+  puts("thread-closed");
+  pthread_exit(NULL);
+}
 
-// void changeMode(enum ControllerModeType mode)
-// {
-//   if (mode == CONTROLLER_MODE_RCOVERRIDE && cmode == CONTROLLER_MODE_AUTONOMOUS)
-//   {
-//     maxSpeed = 0;
-//   }
+void changeMode(enum ControllerModeType mode)
+{
+  if (mode == CONTROLLER_MODE_RCOVERRIDE && cmode == CONTROLLER_MODE_AUTONOMOUS) {
+    maxSpeed = 0;
+  }
 
-//   cmode = mode;
+  cmode = mode;
 
-//   if (mode == CONTROLLER_MODE_AUTONOMOUS)
-//   {
-//     maxSpeed = 0;
-//   }
-// }
+  if (mode == CONTROLLER_MODE_AUTONOMOUS) {
+    maxSpeed = 0;
+  }
+}
 
 bool setup()
 {
-  //   cmode = CONTROLLER_MODE_AUTONOMOUS;
-  //   maxSpeed = MOTOR_SET_SPEED_1;
+  cmode = CONTROLLER_MODE_AUTONOMOUS;
+    maxSpeed = MOTOR_SET_SPEED_1;
 
   ensure_export(13);
   ensure_export(19);
 
-  //   // Begin RF Communication
-  //   // Serial.begin(9600);
-  //   puts("initializing...");
+  // Begin RF Communication
+  // Serial.begin(9600);
+  puts("initializing...");
   bool scs;
   int r = 100;
   while (1) {
@@ -200,52 +188,49 @@ bool setup()
 
   ROS_INFO("nrf24 initialization succeeded");
 
-  //   // ensure_export(GPIO_LIFT);
-  //   // ensure_set_dir(GPIO_LIFT, OUTPUT);
-  //   // ensure_export(GPIO_ROTATER);
-  //   // ensure_set_dir(GPIO_ROTATER, OUTPUT);
-  //   ensure_export(GPIO_APWR);
-  //   ensure_set_dir(GPIO_APWR, OUTPUT);
-  //   ensure_export(GPIO_ADIR);
-  //   ensure_set_dir(GPIO_ADIR, OUTPUT);
-  //   // ensure_export(GPIO_BDIR);
-  //   // ensure_set_dir(GPIO_BDIR, OUTPUT);
-  //   // ensure_export(GPIO_BPWR);
-  //   // ensure_set_dir(GPIO_BPWR, OUTPUT);
+  // ensure_export(GPIO_LIFT);
+  // ensure_set_dir(GPIO_LIFT, OUTPUT);
+  // ensure_export(GPIO_ROTATER);
+  // ensure_set_dir(GPIO_ROTATER, OUTPUT);
+  ensure_export(GPIO_APWR);
+  ensure_set_dir(GPIO_APWR, OUTPUT);
+  ensure_export(GPIO_ADIR);
+  ensure_set_dir(GPIO_ADIR, OUTPUT);
+  // ensure_export(GPIO_BDIR);
+  // ensure_set_dir(GPIO_BDIR, OUTPUT);
+  // ensure_export(GPIO_BPWR);
+  // ensure_set_dir(GPIO_BPWR, OUTPUT);
 
-  //   // Begin Motor Threads
-  //   int rc;
+  // Begin Motor Threads
+  int rc;
 
-  //   motorA.doExit = false;
-  //   motorA.doPause = false;
-  //   motorA.finished = false;
-  //   motorA.drive_gpio = GPIO_APWR;
-  //   motorA.dir_gpio = GPIO_ADIR;
-  //   motorA.maxSpeed = &maxSpeed;
-  //   motorA.dir = 0;
-  //   motorA.power = 0.f;
-  //   if ((rc = pthread_create(&motorA.tid, NULL, motorThread, &motorA)))
-  //   {
-  //     fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
-  //     return EXIT_FAILURE;
-  //   }
-  //   puts("thread-opened");
+  motorA.doExit = false;
+  motorA.doPause = false;
+  motorA.finished = false;
+  motorA.drive_gpio = GPIO_APWR;
+  motorA.dir_gpio = GPIO_ADIR;
+  motorA.dir = 0;
+  motorA.power = 0.f;
+  if ((rc = pthread_create(&motorA.tid, NULL, motorThread, &motorA))) {
+    fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
+    return EXIT_FAILURE;
+  }
+  puts("thread-opened");
 
-  //   // motorB.doExit = false;
-  //   // motorB.doPause = false;
-  //   motorB.finished = true;
-  //   // motorB.finished = false;
-  //   // motorB.drive_gpio = GPIO_BPWR;
-  //   // motorB.dir_gpio = GPIO_BDIR;
-  //   // motorB.maxSpeed = &maxSpeed;
-  //   // motorB.dir = 0;
-  //   // motorB.power = 0.f;
-  //   // if ((rc = pthread_create(&motorB.tid, NULL, motorThread, &motorB)))
-  //   // {
-  //   //   fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
-  //   //   return EXIT_FAILURE;
-  //   // }
-  //   // puts("thread-opened");
+  motorB.doExit = false;
+  motorB.doPause = false;
+  motorB.finished = false;
+  motorB.finished = false;
+  motorB.drive_gpio = GPIO_BPWR;
+  motorB.dir_gpio = GPIO_BDIR;
+  motorB.dir = 0;
+  motorB.power = 0.f;
+  if ((rc = pthread_create(&motorB.tid, NULL, motorThread, &motorB)))
+  {
+    fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
+    return EXIT_FAILURE;
+  }
+  puts("thread-opened");
 
   return true;
 }
@@ -283,66 +268,63 @@ void loop()
         enum CommunicationType ct = (enum CommunicationType)buf[SIG_LEN];
 
         bool replyComConfirm = true;
+        __uint8_t confirmPacketUID = buf[SIG_LEN + 1];
         switch (ct) {
           case COMMUNICATION_CONNECT_AUTO:
-            // changeMode(CONTROLLER_MODE_AUTONOMOUS);
+            changeMode(CONTROLLER_MODE_AUTONOMOUS);
             puts("CONNECT_AUTO");
             break;
           case COMMUNICATION_CONNECT_RCOVER:
-            // changeMode(CONTROLLER_MODE_RCOVERRIDE);
+            changeMode(CONTROLLER_MODE_RCOVERRIDE);
             puts("CONNECT_RCOVER");
             break;
           case COMMUNICATION_RCMOVE: {
-            // changeMode(CONTROLLER_MODE_RCOVERRIDE);
+            changeMode(CONTROLLER_MODE_RCOVERRIDE);
 
-            // // TODO check this is okay with 127 no movement
-            // motorA.power = ((float)buf[SIG_LEN + 1] - 127.f) / 128.f;
-            // if (motorA.power < 0)
-            // {
-            //   motorA.dir = 1;
-            //   motorA.power = -motorA.power;
-            // }
-            // else
-            // {
-            //   motorA.dir = 0;
-            // }
-            // motorB.power = ((float)buf[SIG_LEN + 2] - 127.f) / 128.f;
-            // if (motorB.power < 0)
-            // {
-            //   motorB.dir = 1;
-            //   motorB.power = -motorB.power;
-            // }
-            // else
-            // {
-            //   motorB.dir = 0;
-            // }
+            // TODO check this is okay with 127 no movement
+            motorA.power = ((float)buf[SIG_LEN + 1] - 127.f) / 128.f;
+            if (motorA.power < 0) {
+              motorA.dir = 1;
+              motorA.power = -motorA.power;
+            }
+            else {
+              motorA.dir = 0;
+            }
+            motorB.power = ((float)buf[SIG_LEN + 2] - 127.f) / 128.f;
+            if (motorB.power < 0) {
+              motorB.dir = 1;
+              motorB.power = -motorB.power;
+            }
+            else {
+              motorB.dir = 0;
+            }
 
             // TODO -- Not sending a packet uid to verify -- make it cleaner
             // replyComConfirm = false;
-            printf("CONNECT_RCMOVE\n");// : A[%i, %.3f] B[%i, %.3f]\n", motorA.dir, motorA.power, motorB.dir,
-            // motorB.power);
+            confirmPacketUID = 101;
+            printf("CONNECT_RCMOVE: A[%i, %.3f] B[%i, %.3f]\n", motorA.dir, motorA.power, motorB.dir, motorB.power);
           } break;
           case COMMUNICATION_NANO_SHUTDOWN:
             puts("TODO -- Nano Shutdown");
             break;
           case COMMUNICATION_SPEED_SET_1:
-            // maxSpeed = MOTOR_SET_SPEED_1;
+            maxSpeed = MOTOR_SET_SPEED_1;
             puts("Speed Set to MOTOR_SET_SPEED_1");
             break;
           case COMMUNICATION_SPEED_SET_2:
-            // maxSpeed = MOTOR_SET_SPEED_2;
+            maxSpeed = MOTOR_SET_SPEED_2;
             puts("Speed Set to MOTOR_SET_SPEED_2");
             break;
           case COMMUNICATION_SPEED_SET_3:
-            // maxSpeed = MOTOR_SET_SPEED_3;
+            maxSpeed = MOTOR_SET_SPEED_3;
             puts("Speed Set to MOTOR_SET_SPEED_3");
             break;
           case COMMUNICATION_SPEED_SET_4:
-            // maxSpeed = MOTOR_SET_SPEED_4;
+            maxSpeed = MOTOR_SET_SPEED_4;
             puts("Speed Set to MOTOR_SET_SPEED_4");
             break;
           case COMMUNICATION_SPEED_SET_5:
-            // maxSpeed = MOTOR_SET_SPEED_5;
+            maxSpeed = MOTOR_SET_SPEED_5;
             puts("Speed Set to MOTOR_SET_SPEED_5");
             break;
           default:
@@ -357,7 +339,7 @@ void loop()
           }
 
           // In Packets Expecting Confirmation PacketUID is in the +1 position
-          data[SIG_LEN] = buf[SIG_LEN + 1];
+          data[SIG_LEN] = confirmPacketUID;
 
           nrf24.send(data, sizeof(data));
           nrf24.waitPacketSent();
@@ -377,25 +359,22 @@ void loop()
 
 void cleanup()
 {
-  //   // End Motor Threads
-  //   motorA.doExit = motorB.doExit = true;
+  // End Motor Threads
+  motorA.doExit = motorB.doExit = true;
 
-  //   int r = 0;
-  //   while ((!motorA.finished || !motorB.finished) && r < 4000)
-  //   {
-  //     usleep(500);
-  //     ++r;
-  //   }
+  int r = 0;
+  while ((!motorA.finished || !motorB.finished) && r < 4000) {
+    usleep(500);
+    ++r;
+  }
 
-  //   if (motorA.finished)
-  //   {
-  //     puts("Trouble shutting down MotorA-Thread");
-  //   }
-  //   if (motorB.finished)
-  //   {
-  //     puts("Trouble shutting down MotorB-Thread");
-  //   }
-  //   // TODO -- unexport??
+  if (motorA.finished) {
+    puts("Trouble shutting down MotorA-Thread");
+  }
+  if (motorB.finished) {
+    puts("Trouble shutting down MotorB-Thread");
+  }
+  // TODO -- unexport??
 
   gpio_unexport(13);
   gpio_unexport(19);

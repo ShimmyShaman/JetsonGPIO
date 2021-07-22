@@ -16,6 +16,8 @@
 
 #include <opencv2/videoio.hpp>
 
+#include "std_srvs/Empty.h"
+
 #include "JetsonNanoRadiohead/RH_NRF24.h"
 #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
 // #include "RH_NRF24.h"
@@ -58,17 +60,17 @@ enum ControllerModeType {
 };
 // END-SECTION
 
-#define MOTOR_SET_SPEED_1 100  // 1
-#define MOTOR_SET_SPEED_2 200  // 6
-#define MOTOR_SET_SPEED_3 400  // 36
-#define MOTOR_SET_SPEED_4 800  //
+#define MOTOR_SET_SPEED_1 100 // 1
+#define MOTOR_SET_SPEED_2 200 // 6
+#define MOTOR_SET_SPEED_3 400 // 36
+#define MOTOR_SET_SPEED_4 800 //
 #define MOTOR_SET_SPEED_5 1000
 
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_gpio, dir_gpio;
   // int *maxSpeed;
-  float power;  // (0->1)
+  float power; // (0->1)
   int dir;
   bool doExit;
   bool doPause;
@@ -78,8 +80,8 @@ typedef struct MotorThreadData {
 MotorThreadData motorA, motorB;
 
 // Singleton instance of the radio driver
-RH_NRF24 nrf24(13, 19);  // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
-                         // 22, 24 respectively)
+RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
+                        // 22, 24 respectively)
 
 int maxSpeed;
 enum ControllerModeType cmode;
@@ -87,7 +89,7 @@ enum ControllerModeType cmode;
 ros::ServiceClient save_image_client;
 std_srvs::Empty empty_msg;
 
-cv2::VideoWriter *videoWriter;
+cv::VideoWriter *videoWriter;
 
 void *motorThread(void *arg)
 {
@@ -156,7 +158,7 @@ void changeMode(enum ControllerModeType mode)
   }
 }
 
-bool setup()
+bool setup(ros::NodeHandle &nh)
 {
   cmode = CONTROLLER_MODE_AUTONOMOUS;
   maxSpeed = MOTOR_SET_SPEED_1;
@@ -164,7 +166,7 @@ bool setup()
   // Image Saver
   save_image_client = nh.serviceClient<std_srvs::Empty>("/image_view/save");
   videoWriter =
-      new cv::VideoWriter("outcpp.avi", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 10, cv2::Size(1920, 1080));
+      new cv::VideoWriter("outcpp.avi", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 10, cv::Size(1920, 1080));
 
   ensure_export(13);
   ensure_export(19);
@@ -341,7 +343,7 @@ void loop()
             ROS_INFO("Speed Set to MOTOR_SET_SPEED_5");
             break;
           case COMMUNICATION_CAPTURE_IMAGE:
-            if (save_image_client.call(svc)) {
+            if (save_image_client.call(empty_msg)) {
               ROS_INFO("Sent image save request");
             }
             else {
@@ -405,14 +407,14 @@ void cleanup()
 int getch()
 {
   static struct termios oldt, newt;
-  tcgetattr(STDIN_FILENO, &oldt);  // save old settings
+  tcgetattr(STDIN_FILENO, &oldt); // save old settings
   newt = oldt;
-  newt.c_lflag &= ~(ICANON);                // disable buffering
-  tcsetattr(STDIN_FILENO, TCSANOW, &newt);  // apply new settings
+  newt.c_lflag &= ~(ICANON);               // disable buffering
+  tcsetattr(STDIN_FILENO, TCSANOW, &newt); // apply new settings
 
-  int c = getchar();  // read character (non-blocking)
+  int c = getchar(); // read character (non-blocking)
 
-  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // restore old settings
+  tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // restore old settings
   return c;
 }
 
@@ -424,7 +426,7 @@ int main(int argc, char **argv)
   ros::init(argc, argv, "rf_receiver");
   ros::NodeHandle nh;
 
-  if (!setup()) {
+  if (!setup(nh)) {
     cleanup();
 
     ROS_INFO("rf_receiver Failed Setup");

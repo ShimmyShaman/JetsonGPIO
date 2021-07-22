@@ -4,14 +4,18 @@ project(alligator)
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
 
+find_package(OpenCV REQUIRED)
+
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
+  cv_bridge
   image_transport
   roscpp
   rospy
   std_msgs
+  std_srvs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -69,11 +73,11 @@ add_definitions(-DROS1)
 #   Action2.action
 # )
 
-## Generate added messages and services with any dependencies listed here
-#generate_messages(
+# # Generate added messages and services with any dependencies listed here
+# generate_messages(
 #  DEPENDENCIES
 #  std_msgs
-#)
+# )
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -120,6 +124,7 @@ catkin_package(
 include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -171,7 +176,15 @@ target_include_directories(jetson_nano_radiohead PUBLIC src/JetsonNanoRadiohead 
 # # add_dependencies(object_detector alligator_gencpp)
 
 add_executable(rf_receiver src/rf_receiver.cpp )
-target_link_libraries(rf_receiver ${catkin_LIBRARIES} jetson_nano_radiohead )
+target_link_libraries(rf_receiver ${OpenCV_LIBS} ${catkin_LIBRARIES} jetson_nano_radiohead )
+# add_dependencies(rf_receiver alligator_gencpp)
+
+add_executable(video_writer src/video_writer.cpp )
+target_link_libraries(video_writer ${OpenCV_LIBS} ${catkin_LIBRARIES} )
+# add_dependencies(rf_receiver alligator_gencpp)
+
+add_executable(image_publisher src/image_publisher.cpp )
+target_link_libraries(image_publisher ${OpenCV_LIBS} ${catkin_LIBRARIES} )
 # add_dependencies(rf_receiver alligator_gencpp)
 
 #############

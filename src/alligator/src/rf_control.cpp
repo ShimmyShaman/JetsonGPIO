@@ -1,4 +1,4 @@
-/* rf_receiver.cpp */
+/* rf_control.cpp */
 
 // #include <errno.h>
 // #include <fcntl.h>
@@ -9,14 +9,18 @@
 // #include <stdlib.h>
 // #include <string.h>
 // #include <time.h>
-#include <ros/ros.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+
+#include <ros/ros.h>
 // #include "ros_compat.h"
 
 #include <opencv2/videoio.hpp>
 
 #include "std_srvs/Empty.h"
+#include <image_transport/image_transport.h>
 
 #include "JetsonNanoRadiohead/RH_NRF24.h"
 #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
@@ -48,8 +52,8 @@ enum CommunicationType {
   COMMUNICATION_SPEED_SET_5,
   COMMUNICATION_RCMOVE,
   COMMUNICATION_CAPTURE_IMAGE,
-  COMMUNICATION_RECORD_VIDEO,
-  COMMUNICATION_STOP_VIDEO,
+  COMMUNICATION_CAPTURE_IMAGE_SEQUENCE,
+  COMMUNICATION_STOP_CAPTURE_SEQUENCE,
   COMMUNICATION_NANO_SHUTDOWN = 127,
 };
 
@@ -60,10 +64,10 @@ enum ControllerModeType {
 };
 // END-SECTION
 
-#define MOTOR_SET_SPEED_1 100 // 1
-#define MOTOR_SET_SPEED_2 200 // 6
-#define MOTOR_SET_SPEED_3 400 // 36
-#define MOTOR_SET_SPEED_4 800 //
+#define MOTOR_SET_SPEED_1 60  // 1
+#define MOTOR_SET_SPEED_2 120 // 6
+#define MOTOR_SET_SPEED_3 240 // 36
+#define MOTOR_SET_SPEED_4 480 //
 #define MOTOR_SET_SPEED_5 1000
 
 typedef struct MotorThreadData {
@@ -86,10 +90,10 @@ RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
 int maxSpeed;
 enum ControllerModeType cmode;
 
+bool shutdown_requested = false;
 ros::ServiceClient save_image_client;
+int captureImageState;
 std_srvs::Empty empty_msg;
-
-cv::VideoWriter *videoWriter;
 
 void *motorThread(void *arg)
 {
@@ -158,6 +162,14 @@ void changeMode(enum ControllerModeType mode)
   }
 }
 
+void jetcamImageCallback(const sensor_msgs::ImageConstPtr &msg)
+{
+  if (captureImageState) {
+    --captureImageState;
+    save_image_client.call(empty_msg);
+  }
+}
+
 bool setup(ros::NodeHandle &nh)
 {
   cmode = CONTROLLER_MODE_AUTONOMOUS;
@@ -165,8 +177,10 @@ bool setup(ros::NodeHandle &nh)
 
   // Image Saver
   save_image_client = nh.serviceClient<std_srvs::Empty>("/image_view/save");
-  videoWriter =
-      new cv::VideoWriter("outcpp.avi", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 10, cv::Size(1920, 1080));
+  captureImageState = 0;
+
+  image_transport::ImageTransport it(nh);
+  image_transport::Subscriber sub = it.subscribe("jetcam/image", 1, jetcamImageCallback);
 
   ensure_export(13);
   ensure_export(19);
@@ -320,7 +334,8 @@ void loop()
             printf("CONNECT_RCMOVE: A[%i, %.3f] B[%i, %.3f]\n", motorA.dir, motorA.power, motorB.dir, motorB.power);
           } break;
           case COMMUNICATION_NANO_SHUTDOWN:
-            ROS_INFO("TODO -- Nano Shutdown");
+            ROS_INFO("Nano Shutdown");
+            shutdown_requested = true;
             break;
           case COMMUNICATION_SPEED_SET_1:
             maxSpeed = MOTOR_SET_SPEED_1;
@@ -343,13 +358,18 @@ void loop()
             ROS_INFO("Speed Set to MOTOR_SET_SPEED_5");
             break;
           case COMMUNICATION_CAPTURE_IMAGE:
-            if (save_image_client.call(empty_msg)) {
-              ROS_INFO("Sent image save request");
+            if (!captureImageState) {
+              captureImageState = 1;
+              ROS_INFO("Beginning Single Image Capture");
             }
-            else {
-              ROS_ERROR("Failed to call service image_saver::save");
-              break;
-            }
+            break;
+          case COMMUNICATION_CAPTURE_IMAGE_SEQUENCE:
+            ROS_INFO("Beginning Image Capture Sequence");
+            captureImageState = 4 * 30;
+            break;
+          case COMMUNICATION_STOP_CAPTURE_SEQUENCE:
+            ROS_INFO("Aborting Image Capture Sequence");
+            captureImageState = 0;
             break;
           default:
             printf("Unrecognised Verified Communication:'%s'\n", buf + SIG_LEN);
@@ -381,6 +401,64 @@ void loop()
   }
 }
 
+void transferSessionCaptures()
+{
+  const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
+  char buf[512], ovb[512], mvb[512];
+  // sprintf(buf, "%s/%i_%i%s%i", CAPTURE_DIR, tm_struct->tm_mday, tm_struct->tm_hour, (tm_struct->tm_min / 10) ? "" :
+  // "0",
+  //         tm_struct->tm_min);
+  // mkdir(buf, 0777);
+
+  int session_idx = 1;
+  struct stat sb;
+
+  for (;; ++session_idx) {
+    sprintf(buf, "%s/s%i", CAPTURE_DIR, session_idx);
+    if (stat(buf, &sb) != 0 || !S_ISDIR(sb.st_mode))
+      break;
+  }
+  bool dir_created = false;
+
+  DIR *dir;
+  struct dirent *ent;
+  if ((dir = opendir(CAPTURE_DIR)) != NULL) {
+    // Obtain all children in the directory
+    while ((ent = readdir(dir)) != NULL) {
+      int len = strlen(ent->d_name);
+      if (len >= 5 && !strncmp(".jpg", ent->d_name + len - 4, 4)) {
+        sprintf(ovb, "%s/%s", CAPTURE_DIR, ent->d_name);
+        sprintf(mvb, "%s/%s", buf, ent->d_name);
+
+        if (!dir_created) {
+          // Create it before moving files there
+          dir_created = true;
+          if (mkdir(buf, 0777)) {
+            ROS_INFO("Could not create directory for session captures, aborting");
+            closedir(dir);
+            return;
+          }
+        }
+
+        if (rename(ovb, mvb)) {
+          ROS_INFO("Error moving jpg: %s", ent->d_name);
+        }
+        else {
+          ROS_INFO("Moved file '%s'", ent->d_name);
+        }
+      }
+      else {
+        // ROS_INFO("Ignoring file entry '%s' as not jpg", ent->d_name);
+      }
+    }
+    closedir(dir);
+  }
+  else {
+    /* could not open directory */
+    ROS_INFO("could not open directory '%s'", CAPTURE_DIR);
+  }
+}
+
 void cleanup()
 {
   // End Motor Threads
@@ -402,6 +480,9 @@ void cleanup()
 
   gpio_unexport(13);
   gpio_unexport(19);
+
+  // Move any captures into a session folder
+  transferSessionCaptures();
 }
 
 int getch()
@@ -420,21 +501,21 @@ int getch()
 
 int main(int argc, char **argv)
 {
-  ROS_INFO("rf_receiver Begun");
+  ROS_INFO("rf_control Begun");
 
-  ROS_INFO("Press 'q' to exit");
-  ros::init(argc, argv, "rf_receiver");
+  // ROS_INFO("Press 'q' to exit");
+  ros::init(argc, argv, "rf_control");
   ros::NodeHandle nh;
 
   if (!setup(nh)) {
     cleanup();
 
-    ROS_INFO("rf_receiver Failed Setup");
+    ROS_INFO("rf_control Failed Setup");
     return -1;
   }
 
   ros::Rate loop_rate(2);
-  while (ros::ok()) {
+  while (ros::ok() && !shutdown_requested) {
     // Call your non-blocking input function
     // int c = getch();
     // if (c == 'q') {
@@ -450,7 +531,11 @@ int main(int argc, char **argv)
   // ROS_INFO("cleanup");
   cleanup();
 
-  // ROS_INFO("rf_receiver Exited");
+  if (shutdown_requested) {
+    system("shutdown -P now");
+  }
+
+  // ROS_INFO("rf_control Exited");
   return 0;
 }
 

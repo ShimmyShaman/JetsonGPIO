@@ -5,6 +5,15 @@ project(alligator)
 # add_compile_options(-std=c++11)
 
 find_package(OpenCV REQUIRED)
+find_package(CUDA REQUIRED)
+message("-- CUDA version: ${CUDA_VERSION}")
+
+find_package(PkgConfig REQUIRED)
+pkg_search_module(GST REQUIRED gstreamer-1.0>=1.4 gstreamer-sdp-1.0>=1.4 gstreamer-video-1.0>=1.4 gstreamer-app-1.0>=1.4)
+message("-- GSTREAMER version: ${GST_VERSION}")
+
+# find_package(jetson-utils REQUIRED)
+
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -125,6 +134,8 @@ include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${CUDA_INCLUDE_DIRS}
+  ${GST_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -175,17 +186,17 @@ target_include_directories(jetson_nano_radiohead PUBLIC src/JetsonNanoRadiohead 
 # target_link_libraries(object_detector ${catkin_LIBRARIES} ) 
 # # add_dependencies(object_detector alligator_gencpp)
 
-add_executable(rf_receiver src/rf_receiver.cpp )
-target_link_libraries(rf_receiver ${OpenCV_LIBS} ${catkin_LIBRARIES} jetson_nano_radiohead )
-# add_dependencies(rf_receiver alligator_gencpp)
+add_executable(rf_control src/rf_control.cpp )
+target_link_libraries(rf_control ${OpenCV_LIBS} ${catkin_LIBRARIES} jetson_nano_radiohead )
+# add_dependencies(rf_control alligator_gencpp)
 
-add_executable(video_writer src/video_writer.cpp )
-target_link_libraries(video_writer ${OpenCV_LIBS} ${catkin_LIBRARIES} )
-# add_dependencies(rf_receiver alligator_gencpp)
+# add_executable(video_writer src/video_writer.cpp )
+# target_link_libraries(video_writer ${OpenCV_LIBS} ${catkin_LIBRARIES} )
+# # add_dependencies(rf_control alligator_gencpp)
 
-add_executable(image_publisher src/image_publisher.cpp )
-target_link_libraries(image_publisher ${OpenCV_LIBS} ${catkin_LIBRARIES} )
-# add_dependencies(rf_receiver alligator_gencpp)
+add_executable(image_publisher src/image_publisher.cpp src/image_converter.cpp )
+target_link_libraries(image_publisher ${OpenCV_LIBS} ${catkin_LIBRARIES} jetson-utils )
+# add_dependencies(rf_control alligator_gencpp)
 
 #############
 ## Install ##

@@ -175,11 +175,11 @@ bool imageConverter::Convert( sensor_msgs::Image& msg, imageFormat format, Pixel
 		return false;
 	}
 	if (mSizeInput == 0) {
-		ROS_DEBUG("mSizeInput = %i", mSizeInput);
+		ROS_DEBUG("mSizeInput = %zu", mSizeInput);
 		return false;
 	}
 	if (mSizeOutput == 0) {
-		ROS_DEBUG("mSizeOutput = %i", mSizeOutput);
+		ROS_DEBUG("mSizeOutput = %zu", mSizeOutput);
 		return false;
 	}
 	

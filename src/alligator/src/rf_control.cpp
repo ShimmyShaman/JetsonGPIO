@@ -10,6 +10,9 @@
 // #include <string.h>
 // #include <time.h>
 #include <dirent.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
@@ -147,6 +150,29 @@ void *motorThread(void *arg)
   m->finished = true;
   ROS_INFO("thread-closed");
   pthread_exit(NULL);
+}
+
+int cp(const char *source, const char *destination)
+{
+  int input, output;
+  if ((input = open(source, O_RDONLY)) == -1) {
+    return -1;
+  }
+  if ((output = creat(destination, 0660)) == -1) {
+    close(input);
+    return -1;
+  }
+
+  // sendfile will work with non-socket output (i.e. regular file) on Linux 2.6.33+
+  off_t bytesCopied = 0;
+  struct stat fileinfo = {0};
+  fstat(input, &fileinfo);
+  int result = sendfile(output, input, &bytesCopied, fileinfo.st_size);
+
+  close(input);
+  close(output);
+
+  return result;
 }
 
 void changeMode(enum ControllerModeType mode)
@@ -360,6 +386,7 @@ void loop()
           case COMMUNICATION_CAPTURE_IMAGE:
             if (!captureImageState) {
               captureImageState = 1;
+              // captureTransferDelay = 4;
               ROS_INFO("Beginning Single Image Capture");
             }
             break;
@@ -399,15 +426,72 @@ void loop()
   else {
     // ROS_INFO("No reply, is nrf24_server running?");
   }
+
+  // if (captureTransferDelay) {
+  //   --captureTransferDelay;
+  //   if (!captureTransferDelay) {
+  //     attemptLatestImageTransferToUSB();
+  //   }
+  // }
 }
+
+// uint32_t captureTransferDelay = 0;
+const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
+const char *USB_CAPTURE_FOLDER = "/media/boo/TRANSCEND";
+
+// void attemptLatestImageTransferToUSB(void)
+// {
+//   struct stat sb;
+//   if (stat(USB_CAPTURE_FOLDER, &sb) != 0 || !S_ISDIR(sb.st_mode)) {
+//     ROS_INFO("USB DRIVE NOT FOUND");
+//     return;
+//   }
+
+//   DIR *dir;
+//   struct dirent *ent;
+//   if ((dir = opendir(CAPTURE_DIR)) != NULL) {
+//     // Obtain all children in the directory
+//     while ((ent = readdir(dir)) != NULL) {
+//       int len = strlen(ent->d_name);
+//       if (len >= 5 && !strncmp(".jpg", ent->d_name + len - 4, 4)) {
+//         sprintf(ovb, "%s/%s", CAPTURE_DIR, ent->d_name);
+//         sprintf(mvb, "%s/%s", buf, ent->d_name);
+
+//         if (!dir_created) {
+//           // Create it before moving files there
+//           dir_created = true;
+//           if (mkdir(buf, 0777)) {
+//             ROS_INFO("Could not create directory for session captures, aborting");
+//             closedir(dir);
+//             return;
+//           }
+//         }
+
+//         if (rename(ovb, mvb)) {
+//           ROS_INFO("Error moving jpg: %s", ent->d_name);
+//         }
+//         else {
+//           ROS_INFO("Moved file '%s'", ent->d_name);
+//         }
+//       }
+//       else {
+//         // ROS_INFO("Ignoring file entry '%s' as not jpg", ent->d_name);
+//       }
+//     }
+//     closedir(dir);
+//   }
+//   else {
+//     /* could not open directory */
+//     ROS_INFO("could not open directory '%s'", CAPTURE_DIR);
+//   }
+//   // cp("")
+// }
 
 void transferSessionCaptures()
 {
-  const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
   char buf[512], ovb[512], mvb[512];
   // sprintf(buf, "%s/%i_%i%s%i", CAPTURE_DIR, tm_struct->tm_mday, tm_struct->tm_hour, (tm_struct->tm_min / 10) ? "" :
-  // "0",
-  //         tm_struct->tm_min);
+  // "0", tm_struct->tm_min);
   // mkdir(buf, 0777);
 
   int session_idx = 1;
@@ -514,7 +598,7 @@ int main(int argc, char **argv)
     return -1;
   }
 
-  ros::Rate loop_rate(2);
+  ros::Rate loop_rate(4);
   while (ros::ok() && !shutdown_requested) {
     // Call your non-blocking input function
     // int c = getch();

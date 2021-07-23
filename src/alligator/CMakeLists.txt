@@ -195,7 +195,7 @@ target_link_libraries(rf_control ${OpenCV_LIBS} ${catkin_LIBRARIES} jetson_nano_
 # # add_dependencies(rf_control alligator_gencpp)
 
 add_executable(image_publisher src/image_publisher.cpp src/image_converter.cpp )
-target_link_libraries(image_publisher ${OpenCV_LIBS} ${catkin_LIBRARIES} jetson-utils )
+target_link_libraries(image_publisher ${OpenCV_LIBS} ${catkin_LIBRARIES} ${CUDA_LIBRARIES} jetson-utils )
 # add_dependencies(rf_control alligator_gencpp)
 
 #############

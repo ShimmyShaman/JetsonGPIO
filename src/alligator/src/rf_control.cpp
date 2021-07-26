@@ -190,6 +190,7 @@ void changeMode(enum ControllerModeType mode)
 
 void jetcamImageCallback(const sensor_msgs::ImageConstPtr &msg)
 {
+  ROS_INFO("jetcamImageCallback");
   if (captureImageState) {
     --captureImageState;
     save_image_client.call(empty_msg);
@@ -204,9 +205,6 @@ bool setup(ros::NodeHandle &nh)
   // Image Saver
   save_image_client = nh.serviceClient<std_srvs::Empty>("/image_view/save");
   captureImageState = 0;
-
-  image_transport::ImageTransport it(nh);
-  image_transport::Subscriber sub = it.subscribe("jetcam/image", 1, jetcamImageCallback);
 
   ensure_export(13);
   ensure_export(19);
@@ -598,7 +596,11 @@ int main(int argc, char **argv)
     return -1;
   }
 
-  ros::Rate loop_rate(4);
+  // captureImageState = 22;
+  image_transport::ImageTransport it(nh);
+  image_transport::Subscriber sub = it.subscribe("jetcam/image", 1, jetcamImageCallback);
+
+  ros::Rate loop_rate(8);
   while (ros::ok() && !shutdown_requested) {
     // Call your non-blocking input function
     // int c = getch();
@@ -606,10 +608,10 @@ int main(int argc, char **argv)
     //   break;
     // }
 
-    // ros::spinOnce();
-    loop_rate.sleep();
-    // ROS_INFO("a");
     loop();
+    loop_rate.sleep();
+    ros::spinOnce();
+    ROS_INFO("captureImageState=%i", captureImageState);
   }
 
   // ROS_INFO("cleanup");

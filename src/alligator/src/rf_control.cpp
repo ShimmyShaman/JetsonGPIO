@@ -11,22 +11,21 @@
 // #include <time.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <ros/ros.h>
 #include <stdio.h>
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
-
-#include <ros/ros.h>
 // #include "ros_compat.h"
+
+#include <image_transport/image_transport.h>
 
 #include <opencv2/videoio.hpp>
 
-#include "std_srvs/Empty.h"
-#include <image_transport/image_transport.h>
-
 #include "JetsonNanoRadiohead/RH_NRF24.h"
 #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
+#include "std_srvs/Empty.h"
 // #include "RH_NRF24.h"
 
 #define GPIO_LIFT 149
@@ -43,6 +42,7 @@
 uint8_t signature[] = {113, 176, 87};
 
 #define PID_COUNTER_EMAX 250
+#define CAPTURE_SEQUENCE_DURATION 30000
 
 enum CommunicationType {
   COMMUNICATION_NULL = 0,
@@ -67,17 +67,17 @@ enum ControllerModeType {
 };
 // END-SECTION
 
-#define MOTOR_SET_SPEED_1 60  // 1
-#define MOTOR_SET_SPEED_2 120 // 6
-#define MOTOR_SET_SPEED_3 240 // 36
-#define MOTOR_SET_SPEED_4 480 //
+#define MOTOR_SET_SPEED_1 60   // 1
+#define MOTOR_SET_SPEED_2 120  // 6
+#define MOTOR_SET_SPEED_3 240  // 36
+#define MOTOR_SET_SPEED_4 480  //
 #define MOTOR_SET_SPEED_5 1000
 
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_gpio, dir_gpio;
   // int *maxSpeed;
-  float power; // (0->1)
+  float power;  // (0->1)
   int dir;
   bool doExit;
   bool doPause;
@@ -87,8 +87,8 @@ typedef struct MotorThreadData {
 MotorThreadData motorA, motorB;
 
 // Singleton instance of the radio driver
-RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
-                        // 22, 24 respectively)
+RH_NRF24 nrf24(13, 19);  // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
+                         // 22, 24 respectively)
 
 int maxSpeed;
 enum ControllerModeType cmode;
@@ -390,7 +390,7 @@ void loop()
             break;
           case COMMUNICATION_CAPTURE_IMAGE_SEQUENCE:
             ROS_INFO("Beginning Image Capture Sequence");
-            captureImageState = 4 * 30;
+            captureImageState = 4 * (CAPTURE_SEQUENCE_DURATION / 1000);
             break;
           case COMMUNICATION_STOP_CAPTURE_SEQUENCE:
             ROS_INFO("Aborting Image Capture Sequence");
@@ -570,14 +570,14 @@ void cleanup()
 int getch()
 {
   static struct termios oldt, newt;
-  tcgetattr(STDIN_FILENO, &oldt); // save old settings
+  tcgetattr(STDIN_FILENO, &oldt);  // save old settings
   newt = oldt;
-  newt.c_lflag &= ~(ICANON);               // disable buffering
-  tcsetattr(STDIN_FILENO, TCSANOW, &newt); // apply new settings
+  newt.c_lflag &= ~(ICANON);                // disable buffering
+  tcsetattr(STDIN_FILENO, TCSANOW, &newt);  // apply new settings
 
-  int c = getchar(); // read character (non-blocking)
+  int c = getchar();  // read character (non-blocking)
 
-  tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // restore old settings
+  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // restore old settings
   return c;
 }
 

@@ -43,6 +43,7 @@
 uint8_t signature[] = {113, 176, 87};
 
 #define PID_COUNTER_EMAX 250
+#define CAPTURE_IMAGE_SEQUENCE_DURATION 30
 
 enum CommunicationType {
   COMMUNICATION_NULL = 0,
@@ -89,6 +90,10 @@ MotorThreadData motorA, motorB;
 // Singleton instance of the radio driver
 RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
                         // 22, 24 respectively)
+
+uint32_t captureTransferDelay = 0;
+const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
+const char *USB_CAPTURE_FOLDER = "/media/boo/transcend/captures";
 
 int maxSpeed;
 enum ControllerModeType cmode;
@@ -160,7 +165,7 @@ int cp(const char *source, const char *destination)
   }
   if ((output = creat(destination, 0660)) == -1) {
     close(input);
-    return -1;
+    return -2;
   }
 
   // sendfile will work with non-socket output (i.e. regular file) on Linux 2.6.33+
@@ -190,10 +195,126 @@ void changeMode(enum ControllerModeType mode)
 
 void jetcamImageCallback(const sensor_msgs::ImageConstPtr &msg)
 {
-  ROS_INFO("jetcamImageCallback");
+  // ROS_INFO("jetcamImageCallback");
   if (captureImageState) {
     --captureImageState;
     save_image_client.call(empty_msg);
+
+    if (!captureImageState) {
+      // Delay a capture transfer (latest image to the usb) for 2 frames
+      captureTransferDelay = 2;
+    }
+  }
+}
+
+void attemptLatestImageTransferToUSB(void)
+{
+  struct stat sb;
+  if (stat(USB_CAPTURE_FOLDER, &sb) != 0 || !S_ISDIR(sb.st_mode)) {
+    ROS_INFO("USB DRIVE NOT FOUND");
+    return;
+  }
+  ROS_INFO("USB DRIVE FOUND");
+
+  char nb[64], ovb[512], mvb[512];
+  int latest_img_nb = -1;
+  nb[4] = '\0';
+
+  DIR *dir;
+  struct dirent *ent;
+  if ((dir = opendir(CAPTURE_DIR)) != NULL) {
+    // Obtain all children in the directory
+    while ((ent = readdir(dir)) != NULL) {
+      int len = strlen(ent->d_name);
+      if (len >= 8 && !strncmp(".jpg", ent->d_name + len - 4, 4)) {
+
+        memcpy(nb, ent->d_name + len - (4 + 4), sizeof(char) * 4);
+        int n = atoi(nb);
+
+        if (n > latest_img_nb) {
+          ROS_INFO("Latest Img Nb is : %i", n);
+          latest_img_nb = n;
+          sprintf(ovb, "%s/%s", CAPTURE_DIR, ent->d_name);
+          // sprintf(cmd, "cp %s %s/%s", ovb, USB_CAPTURE_FOLDER, ent->d_name);
+          sprintf(mvb, "%s/%s", USB_CAPTURE_FOLDER, ent->d_name);
+        }
+      }
+      else {
+        // ROS_INFO("Ignoring file entry '%s' as not jpg", ent->d_name);
+      }
+    }
+
+    ROS_INFO("Begin USB Img Transfer: %s", ovb);
+    if (latest_img_nb >= 0) {
+      int result = cp(ovb, mvb);
+      if (result < 0) {
+        ROS_INFO("Error(%i) copying jpg: %s >> %s", result, ovb, mvb);
+      }
+      else {
+        ROS_INFO("Copied file '%s' to USB: %s (%i bytes)", ovb, mvb, result);
+      }
+    }
+    closedir(dir);
+  }
+  else {
+    /* could not open directory */
+    ROS_INFO("could not open directory '%s'", CAPTURE_DIR);
+  }
+}
+
+void transferSessionCaptures()
+{
+  char buf[512], ovb[512], mvb[512];
+  // sprintf(buf, "%s/%i_%i%s%i", CAPTURE_DIR, tm_struct->tm_mday, tm_struct->tm_hour, (tm_struct->tm_min / 10) ? "" :
+  // "0", tm_struct->tm_min);
+  // mkdir(buf, 0777);
+
+  int session_idx = 1;
+  struct stat sb;
+
+  for (;; ++session_idx) {
+    sprintf(buf, "%s/s%i", CAPTURE_DIR, session_idx);
+    if (stat(buf, &sb) != 0 || !S_ISDIR(sb.st_mode))
+      break;
+  }
+  bool dir_created = false;
+
+  DIR *dir;
+  struct dirent *ent;
+  if ((dir = opendir(CAPTURE_DIR)) != NULL) {
+    // Obtain all children in the directory
+    while ((ent = readdir(dir)) != NULL) {
+      int len = strlen(ent->d_name);
+      if (len >= 5 && !strncmp(".jpg", ent->d_name + len - 4, 4)) {
+        sprintf(ovb, "%s/%s", CAPTURE_DIR, ent->d_name);
+        sprintf(mvb, "%s/%s", buf, ent->d_name);
+
+        if (!dir_created) {
+          // Create it before moving files there
+          dir_created = true;
+          if (mkdir(buf, 0777)) {
+            ROS_INFO("Could not create directory for session captures, aborting");
+            closedir(dir);
+            return;
+          }
+        }
+
+        if (rename(ovb, mvb)) {
+          ROS_INFO("Error moving jpg: %s", ent->d_name);
+        }
+        else {
+          ROS_INFO("Moved file '%s'", ent->d_name);
+        }
+      }
+      else {
+        // ROS_INFO("Ignoring file entry '%s' as not jpg", ent->d_name);
+      }
+    }
+    closedir(dir);
+  }
+  else {
+    /* could not open directory */
+    ROS_INFO("could not open directory '%s'", CAPTURE_DIR);
   }
 }
 
@@ -390,7 +511,7 @@ void loop()
             break;
           case COMMUNICATION_CAPTURE_IMAGE_SEQUENCE:
             ROS_INFO("Beginning Image Capture Sequence");
-            captureImageState = 4 * 30;
+            captureImageState = 4 * CAPTURE_IMAGE_SEQUENCE_DURATION;
             break;
           case COMMUNICATION_STOP_CAPTURE_SEQUENCE:
             ROS_INFO("Aborting Image Capture Sequence");
@@ -425,119 +546,11 @@ void loop()
     // ROS_INFO("No reply, is nrf24_server running?");
   }
 
-  // if (captureTransferDelay) {
-  //   --captureTransferDelay;
-  //   if (!captureTransferDelay) {
-  //     attemptLatestImageTransferToUSB();
-  //   }
-  // }
-}
-
-// uint32_t captureTransferDelay = 0;
-const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
-const char *USB_CAPTURE_FOLDER = "/media/boo/TRANSCEND";
-
-// void attemptLatestImageTransferToUSB(void)
-// {
-//   struct stat sb;
-//   if (stat(USB_CAPTURE_FOLDER, &sb) != 0 || !S_ISDIR(sb.st_mode)) {
-//     ROS_INFO("USB DRIVE NOT FOUND");
-//     return;
-//   }
-
-//   DIR *dir;
-//   struct dirent *ent;
-//   if ((dir = opendir(CAPTURE_DIR)) != NULL) {
-//     // Obtain all children in the directory
-//     while ((ent = readdir(dir)) != NULL) {
-//       int len = strlen(ent->d_name);
-//       if (len >= 5 && !strncmp(".jpg", ent->d_name + len - 4, 4)) {
-//         sprintf(ovb, "%s/%s", CAPTURE_DIR, ent->d_name);
-//         sprintf(mvb, "%s/%s", buf, ent->d_name);
-
-//         if (!dir_created) {
-//           // Create it before moving files there
-//           dir_created = true;
-//           if (mkdir(buf, 0777)) {
-//             ROS_INFO("Could not create directory for session captures, aborting");
-//             closedir(dir);
-//             return;
-//           }
-//         }
-
-//         if (rename(ovb, mvb)) {
-//           ROS_INFO("Error moving jpg: %s", ent->d_name);
-//         }
-//         else {
-//           ROS_INFO("Moved file '%s'", ent->d_name);
-//         }
-//       }
-//       else {
-//         // ROS_INFO("Ignoring file entry '%s' as not jpg", ent->d_name);
-//       }
-//     }
-//     closedir(dir);
-//   }
-//   else {
-//     /* could not open directory */
-//     ROS_INFO("could not open directory '%s'", CAPTURE_DIR);
-//   }
-//   // cp("")
-// }
-
-void transferSessionCaptures()
-{
-  char buf[512], ovb[512], mvb[512];
-  // sprintf(buf, "%s/%i_%i%s%i", CAPTURE_DIR, tm_struct->tm_mday, tm_struct->tm_hour, (tm_struct->tm_min / 10) ? "" :
-  // "0", tm_struct->tm_min);
-  // mkdir(buf, 0777);
-
-  int session_idx = 1;
-  struct stat sb;
-
-  for (;; ++session_idx) {
-    sprintf(buf, "%s/s%i", CAPTURE_DIR, session_idx);
-    if (stat(buf, &sb) != 0 || !S_ISDIR(sb.st_mode))
-      break;
-  }
-  bool dir_created = false;
-
-  DIR *dir;
-  struct dirent *ent;
-  if ((dir = opendir(CAPTURE_DIR)) != NULL) {
-    // Obtain all children in the directory
-    while ((ent = readdir(dir)) != NULL) {
-      int len = strlen(ent->d_name);
-      if (len >= 5 && !strncmp(".jpg", ent->d_name + len - 4, 4)) {
-        sprintf(ovb, "%s/%s", CAPTURE_DIR, ent->d_name);
-        sprintf(mvb, "%s/%s", buf, ent->d_name);
-
-        if (!dir_created) {
-          // Create it before moving files there
-          dir_created = true;
-          if (mkdir(buf, 0777)) {
-            ROS_INFO("Could not create directory for session captures, aborting");
-            closedir(dir);
-            return;
-          }
-        }
-
-        if (rename(ovb, mvb)) {
-          ROS_INFO("Error moving jpg: %s", ent->d_name);
-        }
-        else {
-          ROS_INFO("Moved file '%s'", ent->d_name);
-        }
-      }
-      else {
-        // ROS_INFO("Ignoring file entry '%s' as not jpg", ent->d_name);
-      }
+  if (captureTransferDelay) {
+    --captureTransferDelay;
+    if (!captureTransferDelay) {
+      attemptLatestImageTransferToUSB();
     }
-    closedir(dir);
-  }
-  else {
-    /* could not open directory */
-    ROS_INFO("could not open directory '%s'", CAPTURE_DIR);
   }
 }
 
@@ -611,7 +624,7 @@ int main(int argc, char **argv)
     loop();
     loop_rate.sleep();
     ros::spinOnce();
-    ROS_INFO("captureImageState=%i", captureImageState);
+    // ROS_INFO("captureImageState=%i", captureImageState);
   }
 
   // ROS_INFO("cleanup");

@@ -54,6 +54,7 @@ enum CommunicationType {
   COMMUNICATION_SPEED_SET_4,
   COMMUNICATION_SPEED_SET_5,
   COMMUNICATION_RCMOVE,
+  COMMUNICATION_RCIDLE,
   COMMUNICATION_CAPTURE_IMAGE,
   COMMUNICATION_CAPTURE_IMAGE_SEQUENCE,
   COMMUNICATION_STOP_CAPTURE_SEQUENCE,
@@ -67,34 +68,38 @@ enum ControllerModeType {
 };
 // END-SECTION
 
-#define MOTOR_SET_SPEED_1 60   // 1
-#define MOTOR_SET_SPEED_2 120  // 6
-#define MOTOR_SET_SPEED_3 240  // 36
-#define MOTOR_SET_SPEED_4 480  //
+#define MOTOR_SET_SPEED_1 600 // 1
+#define MOTOR_SET_SPEED_2 800 // 6
+#define MOTOR_SET_SPEED_3 900 // 36
+#define MOTOR_SET_SPEED_4 950 //
 #define MOTOR_SET_SPEED_5 1000
 
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_gpio, dir_gpio;
   // int *maxSpeed;
-  float power;  // (0->1)
+  float power; // (0->1)
   int dir;
   bool doExit;
   bool doPause;
   bool finished;
+  const char *name;
 } MotorThreadData;
 
 MotorThreadData motorA, motorB;
 
 // Singleton instance of the radio driver
-RH_NRF24 nrf24(13, 19);  // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
-                         // 22, 24 respectively)
+RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
+                        // 22, 24 respectively)
 
 uint32_t captureTransferDelay = 0;
 const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
 const char *USB_CAPTURE_FOLDER = "/media/boo/transcend/captures";
 
+// Speed between 0 and 1
 int maxSpeed;
+
+// The mode (RCOverride or Autonomous)
 enum ControllerModeType cmode;
 
 bool shutdown_requested = false;
@@ -105,35 +110,38 @@ std_srvs::Empty empty_msg;
 void *motorThread(void *arg)
 {
   MotorThreadData *m = (MotorThreadData *)arg;
+  ROS_INFO("%s thread opened!", m->name);
 
   int setDir = 99999;
 
-  unsigned long spupdate = millis();
+  // DEBUG
+  int dn = 0;
+  // DEBUG
 
   while (!m->doExit) {
     if (m->doPause) {
       ensure_set_value(m->drive_gpio, 0);
       usleep(1000);
+      continue;
     }
     else {
-      // TODO -- stop this from continuing on if main thread collapses
-      // struct timespec current;
-      // clock_gettime(CLOCK_REALTIME, &current);
-
-      // if(m->)
+      // Stop this from continuing on if main thread collapses
     }
 
-    if (maxSpeed && m->power) {
+    int mex = (int)(m->power * maxSpeed);
+
+    // DEBUG
+    // ++dn;
+    // if (dn % 1000 == 0) {
+    //   printf("%s mex=%i\n", m->name, mex);
+    //   dn -= 1000;
+    // }
+    // DEBUG
+
+    if (mex) {
       if (m->dir != setDir) {
         setDir = m->dir;
         ensure_set_value(m->dir_gpio, setDir);
-      }
-
-      int mex = (int)(m->power * maxSpeed);
-
-      if (millis() - spupdate > 1000) {
-        spupdate = millis();
-        // printf("mex=%i\n", mex);
       }
 
       ensure_set_value(m->drive_gpio, 1);
@@ -146,13 +154,15 @@ void *motorThread(void *arg)
         continue;
       }
     }
-    else
+    else {
       ensure_set_value(m->drive_gpio, 0);
+      usleep(1000);
+    }
   }
 
   ensure_set_value(m->drive_gpio, 0);
   m->finished = true;
-  ROS_INFO("thread-closed");
+  ROS_INFO("%s thread-closed", m->name);
   pthread_exit(NULL);
 }
 
@@ -385,35 +395,31 @@ bool setup(ros::NodeHandle &nh)
   motorA.dir_gpio = GPIO_ADIR;
   motorA.dir = 0;
   motorA.power = 0.f;
+  motorA.name = "MotorA";
   if ((rc = pthread_create(&motorA.tid, NULL, motorThread, &motorA))) {
     fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
     return EXIT_FAILURE;
   }
-  ROS_INFO("MotorA thread-opened");
 
   motorB.doExit = false;
   motorB.doPause = false;
-  motorB.finished = false;
   motorB.finished = false;
   motorB.drive_gpio = GPIO_BPWR;
   motorB.dir_gpio = GPIO_BDIR;
   motorB.dir = 0;
   motorB.power = 0.f;
+  motorB.name = "MotorB";
   if ((rc = pthread_create(&motorB.tid, NULL, motorThread, &motorB))) {
     fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
     return EXIT_FAILURE;
   }
-  ROS_INFO("MotorB thread-opened");
 
   return true;
 }
 
 void loop()
 {
-  //   // ROS_INFO("Sending to nrf24_server");
-  //   // // Send a message to nrf24_server
-  //   // uint8_t data[] = "Hello World!";
-  //   // nrf24.send(data, sizeof(data));
+  uint64_t time = millis();
 
   //   // nrf24.waitPacketSent();
   //   // Now wait for a reply
@@ -437,7 +443,6 @@ void loop()
         }
       }
       if (verified) {
-        ROS_INFO("Verified Communication Received");
         enum CommunicationType ct = (enum CommunicationType)buf[SIG_LEN];
 
         bool replyComConfirm = true;
@@ -451,26 +456,49 @@ void loop()
             changeMode(CONTROLLER_MODE_RCOVERRIDE);
             ROS_INFO("CONNECT_RCOVER");
             break;
+          case COMMUNICATION_RCIDLE: {
+            motorA.power = 0;
+            motorB.power = 0;
+          } break;
           case COMMUNICATION_RCMOVE: {
             changeMode(CONTROLLER_MODE_RCOVERRIDE);
 
-            // TODO check this is okay with 127 no movement
-            motorA.power = ((float)buf[SIG_LEN + 1] - 127.f) / 128.f;
-            if (motorA.power < 0) {
-              motorA.dir = 1;
-              motorA.power = -motorA.power;
+            // DEBUG
+            maxSpeed = MOTOR_SET_SPEED_5;
+            float jx = (float)buf[SIG_LEN + 1], jy = (float)buf[SIG_LEN + 2];
+            // printf("[0]:%.1f  [1]:%.1f\n", jx, jy);
+            // DEBUG
+
+            const float THRES = 4.f, MID = 63.5;
+            if (jx > MID - THRES && jx < MID + THRES && jy > MID - THRES && jy < MID + THRES) {
+              motorA.power = 0;
+              motorB.power = 0;
             }
             else {
-              motorA.dir = 0;
+              motorA.dir = jx > MID ? 1 : 0;
+              motorB.dir = jy > MID ? 0 : 1;
+
+              motorA.power = abs((jx - MID) * 1.05f) / MID;
+              motorB.power = abs((jy - MID) * 1.05f) / MID;
             }
-            motorB.power = ((float)buf[SIG_LEN + 2] - 127.f) / 128.f;
-            if (motorB.power < 0) {
-              motorB.dir = 1;
-              motorB.power = -motorB.power;
-            }
-            else {
-              motorB.dir = 0;
-            }
+
+            // // TODO check this is okay with 127 no movement
+            // motorA.power = ((float)buf[SIG_LEN + 1] - 127.f) / 128.f;
+            // if (motorA.power < 0) {
+            //   motorA.dir = 1;
+            //   motorA.power = -motorA.power;
+            // }
+            // else {
+            //   motorA.dir = 0;
+            // }
+            // motorB.power = 1.f;//((float)buf[SIG_LEN + 2] - 127.f) / 128.f;
+            // if (motorB.power < 0) {
+            //   motorB.dir = 1;
+            //   motorB.power = -motorB.power;
+            // }
+            // else {
+            //   motorB.dir = 0;
+            // }
 
             // TODO -- Not sending a packet uid to verify -- make it cleaner
             // replyComConfirm = false;
@@ -558,38 +586,43 @@ void cleanup()
   // End Motor Threads
   motorA.doExit = motorB.doExit = true;
 
+  // -- Do other stuff while waiting for threads to exit on their own
+  // Move any captures into a session folder
+  transferSessionCaptures();
+
+  // Ensure Motor Threads ended
   int r = 0;
   while ((!motorA.finished || !motorB.finished) && r < 4000) {
     usleep(500);
     ++r;
   }
 
+  // Check thread-hanging timeout conditions
   if (motorA.finished) {
     ROS_INFO("Trouble shutting down MotorA-Thread");
+    // TODO pthread_abort handling
   }
   if (motorB.finished) {
     ROS_INFO("Trouble shutting down MotorB-Thread");
+    // TODO pthread_abort handling
   }
-  // TODO -- unexport??
 
+  // TODO -- unexport??
   gpio_unexport(13);
   gpio_unexport(19);
-
-  // Move any captures into a session folder
-  transferSessionCaptures();
 }
 
 int getch()
 {
   static struct termios oldt, newt;
-  tcgetattr(STDIN_FILENO, &oldt);  // save old settings
+  tcgetattr(STDIN_FILENO, &oldt); // save old settings
   newt = oldt;
-  newt.c_lflag &= ~(ICANON);                // disable buffering
-  tcsetattr(STDIN_FILENO, TCSANOW, &newt);  // apply new settings
+  newt.c_lflag &= ~(ICANON);               // disable buffering
+  tcsetattr(STDIN_FILENO, TCSANOW, &newt); // apply new settings
 
-  int c = getchar();  // read character (non-blocking)
+  int c = getchar(); // read character (non-blocking)
 
-  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // restore old settings
+  tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // restore old settings
   return c;
 }
 
@@ -633,7 +666,8 @@ int main(int argc, char **argv)
     system("shutdown -P now");
   }
 
-  // ROS_INFO("rf_control Exited");
+  ROS_INFO("rf_control Exited");
+  usleep(1000);
   return 0;
 }
 

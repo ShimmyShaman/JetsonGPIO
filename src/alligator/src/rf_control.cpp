@@ -88,7 +88,7 @@ MotorThreadData motorA, motorB;
 
 // Singleton instance of the radio driver
 RH_NRF24 nrf24(13, 19);  // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
-                         // 22, 24 respectively)
+                         // 22, 24 respectively, [ChipEnable, SlaveSelect])
 
 uint32_t captureTransferDelay = 0;
 const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";

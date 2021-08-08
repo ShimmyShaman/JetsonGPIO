@@ -68,17 +68,17 @@ enum ControllerModeType {
 };
 // END-SECTION
 
-#define MOTOR_SET_SPEED_1 600 // 1
-#define MOTOR_SET_SPEED_2 800 // 6
-#define MOTOR_SET_SPEED_3 900 // 36
-#define MOTOR_SET_SPEED_4 950 //
+#define MOTOR_SET_SPEED_1 600  // 1
+#define MOTOR_SET_SPEED_2 800  // 6
+#define MOTOR_SET_SPEED_3 900  // 36
+#define MOTOR_SET_SPEED_4 950  //
 #define MOTOR_SET_SPEED_5 1000
 
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_gpio, dir_gpio;
   // int *maxSpeed;
-  float power; // (0->1)
+  float power;  // (0->1)
   int dir;
   bool doExit;
   bool doPause;
@@ -129,7 +129,7 @@ void *motorThread(void *arg)
       // Stop this from continuing on if main thread collapses
     }
 
-    int mex = (int)(m->power * maxSpeed);
+    int mex = min((int)(m->power * maxSpeed), 1000);
 
     // DEBUG
     // ++dn;
@@ -199,7 +199,11 @@ void changeMode(enum ControllerModeType mode)
   cmode = mode;
 
   if (mode == CONTROLLER_MODE_AUTONOMOUS) {
-    maxSpeed = 0;
+    maxSpeed = MOTOR_SET_SPEED_5;
+    motorA.power = 1;
+    motorA.dir = 1;
+    motorB.power = 1;
+    motorB.dir = 0;
   }
 }
 
@@ -237,7 +241,6 @@ void attemptLatestImageTransferToUSB(void)
     while ((ent = readdir(dir)) != NULL) {
       int len = strlen(ent->d_name);
       if (len >= 8 && !strncmp(".jpg", ent->d_name + len - 4, 4)) {
-
         memcpy(nb, ent->d_name + len - (4 + 4), sizeof(char) * 4);
         int n = atoi(nb);
 
@@ -464,9 +467,10 @@ void loop()
           case COMMUNICATION_RCMOVE: {
             changeMode(CONTROLLER_MODE_RCOVERRIDE);
 
+            float jx = (float)buf[SIG_LEN + 1], jy = (float)buf[SIG_LEN + 2];
+
             // DEBUG
             maxSpeed = MOTOR_SET_SPEED_5;
-            float jx = (float)buf[SIG_LEN + 1], jy = (float)buf[SIG_LEN + 2];
             // printf("[0]:%.1f  [1]:%.1f\n", jx, jy);
             // DEBUG
 
@@ -616,14 +620,14 @@ void cleanup()
 int getch()
 {
   static struct termios oldt, newt;
-  tcgetattr(STDIN_FILENO, &oldt); // save old settings
+  tcgetattr(STDIN_FILENO, &oldt);  // save old settings
   newt = oldt;
-  newt.c_lflag &= ~(ICANON);               // disable buffering
-  tcsetattr(STDIN_FILENO, TCSANOW, &newt); // apply new settings
+  newt.c_lflag &= ~(ICANON);                // disable buffering
+  tcsetattr(STDIN_FILENO, TCSANOW, &newt);  // apply new settings
 
-  int c = getchar(); // read character (non-blocking)
+  int c = getchar();  // read character (non-blocking)
 
-  tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // restore old settings
+  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // restore old settings
   return c;
 }
 

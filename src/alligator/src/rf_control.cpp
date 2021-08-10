@@ -193,10 +193,10 @@ int cp(const char *source, const char *destination)
 
 void changeMode(enum ControllerModeType mode)
 {
-  if (mode == CONTROLLER_MODE_RCOVERRIDE && current_mode == CONTROLLER_MODE_AUTONOMOUS) {
+  if (current_mode == CONTROLLER_MODE_AUTONOMOUS && mode == CONTROLLER_MODE_RCOVERRIDE) {
+    motorA.power = 0;
+    motorB.power = 0;
   }
-
-  current_mode = mode;
 
   if (mode == CONTROLLER_MODE_AUTONOMOUS) {
     motorA.power = 1;
@@ -204,6 +204,8 @@ void changeMode(enum ControllerModeType mode)
     motorB.power = 1;
     motorB.dir = 0;
   }
+
+  current_mode = mode;
 }
 
 void jetcamImageCallback(const sensor_msgs::ImageConstPtr &msg)

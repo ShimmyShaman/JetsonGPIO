@@ -8,7 +8,7 @@
     <param name="save_all_image" value="false"/>
   </node>
 
-  <!-- <node pkg="alligator" name="video_writer_node" type="video_writer"/> -->
-  <node pkg="alligator" name="rf_control_node" type="rf_control"/>
+  <!-- <node pkg="alligator" name="video_writer_node" type="video_writer"/> ->
+  <!-- <node pkg="alligator" name="rf_control_node" type="rf_control"/> -->
 
 </launch>

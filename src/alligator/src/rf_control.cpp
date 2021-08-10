@@ -9,6 +9,7 @@
 // #include <stdlib.h>
 // #include <string.h>
 // #include <time.h>
+// #include <math.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <ros/ros.h>
@@ -68,17 +69,17 @@ enum ControllerModeType {
 };
 // END-SECTION
 
-#define MOTOR_SET_SPEED_1 600  // 1
-#define MOTOR_SET_SPEED_2 800  // 6
-#define MOTOR_SET_SPEED_3 900  // 36
-#define MOTOR_SET_SPEED_4 950  //
+#define MOTOR_SET_SPEED_1 500 // 1
+#define MOTOR_SET_SPEED_2 650 // 6
+#define MOTOR_SET_SPEED_3 800 // 36
+#define MOTOR_SET_SPEED_4 900 //
 #define MOTOR_SET_SPEED_5 1000
 
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_gpio, dir_gpio;
   // int *maxSpeed;
-  float power;  // (0->1)
+  float power; // (0->1)
   int dir;
   bool doExit;
   bool doPause;
@@ -90,8 +91,8 @@ MotorThreadData motorA, motorB;
 
 // Singleton instance of the radio driver
 
-RH_NRF24 nrf24(13, 19);  // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
-                         // 22, 24 respectively, [ChipEnable, SlaveSelect])
+RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
+                        // 22, 24 respectively, [ChipEnable, SlaveSelect])
 
 uint32_t captureTransferDelay = 0;
 const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
@@ -101,7 +102,7 @@ const char *USB_CAPTURE_FOLDER = "/media/boo/transcend/captures";
 int maxSpeed;
 
 // The mode (RCOverride or Autonomous)
-enum ControllerModeType cmode;
+enum ControllerModeType current_mode;
 
 bool shutdown_requested = false;
 ros::ServiceClient save_image_client;
@@ -129,7 +130,8 @@ void *motorThread(void *arg)
       // Stop this from continuing on if main thread collapses
     }
 
-    int mex = min((int)(m->power * maxSpeed), 1000);
+    int mex = (int)(m->power * maxSpeed);
+    mex = mex > 1000 ? 1000 : mex;
 
     // DEBUG
     // ++dn;
@@ -192,14 +194,12 @@ int cp(const char *source, const char *destination)
 
 void changeMode(enum ControllerModeType mode)
 {
-  if (mode == CONTROLLER_MODE_RCOVERRIDE && cmode == CONTROLLER_MODE_AUTONOMOUS) {
-    maxSpeed = 0;
+  if (mode == CONTROLLER_MODE_RCOVERRIDE && current_mode == CONTROLLER_MODE_AUTONOMOUS) {
   }
 
-  cmode = mode;
+  current_mode = mode;
 
   if (mode == CONTROLLER_MODE_AUTONOMOUS) {
-    maxSpeed = MOTOR_SET_SPEED_5;
     motorA.power = 1;
     motorA.dir = 1;
     motorB.power = 1;
@@ -333,8 +333,8 @@ void transferSessionCaptures()
 
 bool setup(ros::NodeHandle &nh)
 {
-  cmode = CONTROLLER_MODE_AUTONOMOUS;
-  maxSpeed = MOTOR_SET_SPEED_1;
+  current_mode = CONTROLLER_MODE_AUTONOMOUS;
+  maxSpeed = MOTOR_SET_SPEED_5;
 
   // Image Saver
   save_image_client = nh.serviceClient<std_srvs::Empty>("/image_view/save");
@@ -470,7 +470,7 @@ void loop()
             float jx = (float)buf[SIG_LEN + 1], jy = (float)buf[SIG_LEN + 2];
 
             // DEBUG
-            maxSpeed = MOTOR_SET_SPEED_5;
+            // maxSpeed = MOTOR_SET_SPEED_5;
             // printf("[0]:%.1f  [1]:%.1f\n", jx, jy);
             // DEBUG
 
@@ -543,11 +543,14 @@ void loop()
             break;
           case COMMUNICATION_CAPTURE_IMAGE_SEQUENCE:
             ROS_INFO("Beginning Image Capture Sequence");
-            captureImageState = 4 * CAPTURE_IMAGE_SEQUENCE_DURATION;
+            if (!captureImageState) {
+              captureImageState = 4 * CAPTURE_IMAGE_SEQUENCE_DURATION;
+            }
             break;
           case COMMUNICATION_STOP_CAPTURE_SEQUENCE:
             ROS_INFO("Aborting Image Capture Sequence");
             captureImageState = 0;
+            captureTransferDelay = 2;
             break;
           default:
             printf("Unrecognised Verified Communication:'%s'\n", buf + SIG_LEN);
@@ -562,6 +565,7 @@ void loop()
 
           // In Packets Expecting Confirmation PacketUID is in the +1 position
           data[SIG_LEN] = confirmPacketUID;
+          ROS_INFO("Sent Confirm %u", confirmPacketUID);
 
           nrf24.send(data, sizeof(data));
           nrf24.waitPacketSent();
@@ -579,6 +583,7 @@ void loop()
   }
 
   if (captureTransferDelay) {
+    // ROS_INFO("captureTransferDelay=%i", captureTransferDelay);
     --captureTransferDelay;
     if (!captureTransferDelay) {
       attemptLatestImageTransferToUSB();
@@ -620,14 +625,14 @@ void cleanup()
 int getch()
 {
   static struct termios oldt, newt;
-  tcgetattr(STDIN_FILENO, &oldt);  // save old settings
+  tcgetattr(STDIN_FILENO, &oldt); // save old settings
   newt = oldt;
-  newt.c_lflag &= ~(ICANON);                // disable buffering
-  tcsetattr(STDIN_FILENO, TCSANOW, &newt);  // apply new settings
+  newt.c_lflag &= ~(ICANON);               // disable buffering
+  tcsetattr(STDIN_FILENO, TCSANOW, &newt); // apply new settings
 
-  int c = getchar();  // read character (non-blocking)
+  int c = getchar(); // read character (non-blocking)
 
-  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // restore old settings
+  tcsetattr(STDIN_FILENO, TCSANOW, &oldt); // restore old settings
   return c;
 }
 

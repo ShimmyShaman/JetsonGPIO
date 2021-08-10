@@ -26,7 +26,6 @@
 #include "JetsonNanoRadiohead/RH_NRF24.h"
 #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
 #include "std_srvs/Empty.h"
-// #include "RH_NRF24.h"
 
 #define GPIO_LIFT 149
 #define GPIO_ROTATER 200
@@ -35,7 +34,7 @@
 #define GPIO_BPWR 12
 #define GPIO_BDIR 76
 
-// SECTION
+// COMMON SECTION
 // This section must be kept in sync between the Nano-side Collector App and the
 // jsapp
 #define SIG_LEN 3
@@ -167,6 +166,23 @@ void *motorThread(void *arg)
   pthread_exit(NULL);
 }
 
+void changeMode(enum ControllerModeType mode)
+{
+  if (mode == CONTROLLER_MODE_RCOVERRIDE && cmode == CONTROLLER_MODE_AUTONOMOUS) {
+    maxSpeed = 0;
+  }
+
+  cmode = mode;
+
+  if (mode == CONTROLLER_MODE_AUTONOMOUS) {
+    maxSpeed = MOTOR_SET_SPEED_5;
+    motorA.power = 1;
+    motorA.dir = 1;
+    motorB.power = 1;
+    motorB.dir = 0;
+  }
+}
+
 int cp(const char *source, const char *destination)
 {
   int input, output;
@@ -188,23 +204,6 @@ int cp(const char *source, const char *destination)
   close(output);
 
   return result;
-}
-
-void changeMode(enum ControllerModeType mode)
-{
-  if (mode == CONTROLLER_MODE_RCOVERRIDE && cmode == CONTROLLER_MODE_AUTONOMOUS) {
-    maxSpeed = 0;
-  }
-
-  cmode = mode;
-
-  if (mode == CONTROLLER_MODE_AUTONOMOUS) {
-    maxSpeed = MOTOR_SET_SPEED_5;
-    motorA.power = 1;
-    motorA.dir = 1;
-    motorB.power = 1;
-    motorB.dir = 0;
-  }
 }
 
 void jetcamImageCallback(const sensor_msgs::ImageConstPtr &msg)
@@ -617,20 +616,6 @@ void cleanup()
   gpio_unexport(19);
 }
 
-int getch()
-{
-  static struct termios oldt, newt;
-  tcgetattr(STDIN_FILENO, &oldt);  // save old settings
-  newt = oldt;
-  newt.c_lflag &= ~(ICANON);                // disable buffering
-  tcsetattr(STDIN_FILENO, TCSANOW, &newt);  // apply new settings
-
-  int c = getchar();  // read character (non-blocking)
-
-  tcsetattr(STDIN_FILENO, TCSANOW, &oldt);  // restore old settings
-  return c;
-}
-
 int main(int argc, char **argv)
 {
   ROS_INFO("rf_control Begun");
@@ -652,12 +637,6 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(8);
   while (ros::ok() && !shutdown_requested) {
-    // Call your non-blocking input function
-    // int c = getch();
-    // if (c == 'q') {
-    //   break;
-    // }
-
     loop();
     loop_rate.sleep();
     ros::spinOnce();
@@ -675,84 +654,3 @@ int main(int argc, char **argv)
   usleep(1000);
   return 0;
 }
-
-// int main(int argc, char **argv)
-// {
-//   return 0;
-//   ROS_INFO("Entered App...");
-//   usleep(1000000 * 8);
-
-//   // ensure_export(GPIO_ADIR);
-//   // ensure_export(GPIO_APWR);
-//   // ensure_export(GPIO_BDIR);
-//   // ensure_export(GPIO_BPWR);
-
-//   // ensure_set_dir(GPIO_APWR, OUTPUT);
-//   // ensure_set_dir(GPIO_ADIR, OUTPUT);
-//   // ensure_set_dir(GPIO_BDIR, OUTPUT);
-//   // ensure_set_dir(GPIO_BPWR, OUTPUT);
-//   // ensure_set_value(GPIO_ADIR, 1);
-//   // ensure_set_value(GPIO_BDIR, 1);
-
-//   // for (int m = 1000; m >= 900; m -= 5)
-//   // {
-//   //   // printf("trying speed %i / %i\n", 1 + m, 1000 - m);
-//   //   // for (int r = 0; r < 3000; ++r)
-//   //   // {
-//   //   //   ensure_set_value(GPIO_APWR, 1);
-//   //   //   ensure_set_value(GPIO_BPWR, 1);
-//   //   //   usleep(1 + m);
-//   //   //   ensure_set_value(GPIO_APWR, 0);
-//   //   //   ensure_set_value(GPIO_BPWR, 0);
-//   //   //   usleep(1000 - m);
-//   //   // }
-
-//   //   // ensure_set_value(GPIO_APWR, 1);
-//   //   ensure_set_value(GPIO_BPWR, 1);
-//   //   usleep(3000000);
-//   //   ensure_set_value(GPIO_APWR, 0);
-//   //   ensure_set_value(GPIO_BPWR, 0);
-//   //   usleep(3000000);
-//   // }
-//   // ensure_set_value(GPIO_APWR, 0);
-//   // ensure_set_value(GPIO_BPWR, 0);
-
-//   // return 0;
-
-//   setup();
-
-//   // unsigned long count = millis();
-//   while (1)
-//     loop();
-
-//   cleanup();
-
-//   // rungpio5secs(149);
-//   // rungpio5secs(200);
-//   // // rungpio5secs(168);
-//   // // rungpio5secs(38);
-
-//   // // ensure_set_dir(149, 1);
-//   // // ensure_set_dir(168, 1);
-
-//   // for (int m = 100; m >= 0; m -= 10)
-//   // {
-//   //   printf("trying speed %i / %i\n", 1 + m, 1000 - m);
-//   //   for (int r = 0; r < 7000; ++r)
-//   //   {
-//   //     ensure_set_value(168, 1);
-//   //     usleep(1 + m);
-//   //     ensure_set_value(168, 0);
-//   //     usleep(1000 - m);
-//   //   }
-//   // }
-//   // ensure_set_value(168, 0);
-
-//   // ensure_set_value(149, 1);
-//   // ensure_set_value(168, 1);
-
-//   delay(1000);
-
-//   ROS_INFO("exiting...");
-//   exit(0);
-// }

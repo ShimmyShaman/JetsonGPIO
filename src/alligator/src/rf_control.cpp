@@ -10,6 +10,7 @@
 // #include <string.h>
 // #include <time.h>
 // #include <math.h>
+#include <atomic>
 #include <dirent.h>
 #include <fcntl.h>
 #include <ros/ros.h>
@@ -25,15 +26,20 @@
 #include <opencv2/videoio.hpp>
 
 #include "JetsonNanoRadiohead/RH_NRF24.h"
-#include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
+// #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
 #include "std_srvs/Empty.h"
 
-#define GPIO_LIFT 149
-#define GPIO_ROTATER 200
-#define GPIO_APWR 168
-#define GPIO_ADIR 51
-#define GPIO_BPWR 12
-#define GPIO_BDIR 76
+#include <JetsonGPIO.h>
+
+#define GPIO_LIFT 29    /*149*/
+#define GPIO_ROTATER 31 /*200*/
+#define GPIO_APWR 32    /*168*/
+#define GPIO_ADIR 36    /*51*/
+#define GPIO_BPWR 37    /*12*/
+#define GPIO_BDIR 35    /*76*/
+
+#define GPIO_AENC 7  /*216*/
+#define GPIO_BENC 11 /*50*/
 
 // COMMON SECTION
 // This section must be kept in sync between the Nano-side Collector App and the
@@ -67,19 +73,19 @@ enum ControllerModeType {
   CONTROLLER_MODE_RCOVERRIDE = 5,
 };
 // END-SECTION
-
-#define MOTOR_SET_SPEED_1 500 // 1
-#define MOTOR_SET_SPEED_2 650 // 6
-#define MOTOR_SET_SPEED_3 800 // 36
-#define MOTOR_SET_SPEED_4 900 //
-#define MOTOR_SET_SPEED_5 1000
+// Speed in mm per second
+#define MOTOR_SET_SPEED_1 250
+#define MOTOR_SET_SPEED_2 500
+#define MOTOR_SET_SPEED_3 750
+#define MOTOR_SET_SPEED_4 1000
+#define MOTOR_SET_SPEED_5 2000
 
 typedef struct MotorThreadData {
   pthread_t tid;
-  unsigned int drive_gpio, dir_gpio;
-  // int *maxSpeed;
+  unsigned int drive_channel, dir_channel;
   float power; // (0->1)
   int dir;
+  std::atomic<unsigned int> enc_register;
   bool doExit;
   bool doPause;
   bool finished;
@@ -97,7 +103,7 @@ uint32_t captureTransferDelay = 0;
 const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
 const char *USB_CAPTURE_FOLDER = "/media/boo/transcend/captures";
 
-// Speed between 0 and 1
+// Speed in mm per second
 int maxSpeed;
 
 // The mode (RCOverride or Autonomous)
@@ -107,6 +113,18 @@ bool shutdown_requested = false;
 ros::ServiceClient save_image_client;
 int captureImageState;
 std_srvs::Empty empty_msg;
+
+void motor_encoding_signal_callback(int channel)
+{
+  switch (channel) {
+    case GPIO_AENC:
+      ++motorA.enc_register;
+      break;
+    case GPIO_BENC:
+      ++motorB.enc_register;
+      break;
+  }
+}
 
 void *motorThread(void *arg)
 {
@@ -119,9 +137,13 @@ void *motorThread(void *arg)
   int dn = 0;
   // DEBUG
 
+  unsigned int prev_enc_sig = 0U;
+  float est_speed = 0.f; // in mm per second -- running average
+
   while (!m->doExit) {
     if (m->doPause) {
-      ensure_set_value(m->drive_gpio, 0);
+      GPIO::output(m->drive_channel, 0);
+      // ensure_set_value(m->drive_channel, 0);
       usleep(1000);
       continue;
     }
@@ -129,40 +151,33 @@ void *motorThread(void *arg)
       // Stop this from continuing on if main thread collapses
     }
 
-    int mex = (int)(m->power * maxSpeed);
-    mex = mex > 1000 ? 1000 : mex;
+    // Update
+    float mex = m->power * maxSpeed;
+    mex = mex > maxSpeed ? maxSpeed : mex;
 
-    // DEBUG
-    // ++dn;
-    // if (dn % 1000 == 0) {
-    //   printf("%s mex=%i\n", m->name, mex);
-    //   dn -= 1000;
-    // }
-    // DEBUG
+    int diff = m->enc_register - prev_enc_sig;
+    prev_enc_sig = m->enc_register;
 
-    if (mex) {
+    // 225 encoder signals per turn - 30cm per turn : 1.2 mm per signal
+    est_speed = est_speed * 0.999f + 0.001f * 1.2f * diff;
+
+    if (est_speed < mex) {
       if (m->dir != setDir) {
         setDir = m->dir;
-        ensure_set_value(m->dir_gpio, setDir);
+        GPIO::output(m->dir_channel, setDir);
       }
 
-      ensure_set_value(m->drive_gpio, 1);
-      usleep(mex);
-      if (mex < 1000) {
-        ensure_set_value(m->drive_gpio, 0);
-        usleep(1000 - mex);
-      }
-      else {
-        continue;
-      }
+      GPIO::output(m->drive_channel, 1);
+      usleep(998);
+      GPIO::output(m->drive_channel, 0);
     }
     else {
-      ensure_set_value(m->drive_gpio, 0);
-      usleep(1000);
+      GPIO::output(m->drive_channel, 0);
+      usleep(998);
     }
   }
 
-  ensure_set_value(m->drive_gpio, 0);
+  GPIO::output(m->drive_channel, 0);
   m->finished = true;
   ROS_INFO("%s thread-closed", m->name);
   pthread_exit(NULL);
@@ -341,8 +356,10 @@ bool setup(ros::NodeHandle &nh)
   save_image_client = nh.serviceClient<std_srvs::Empty>("/image_view/save");
   captureImageState = 0;
 
-  ensure_export(13);
-  ensure_export(19);
+  GPIO::setmode(GPIO::BOARD);
+
+  GPIO::setup(13, GPIO::Directions::OUT);
+  GPIO::setup(19, GPIO::Directions::OUT);
 
   // Begin RF Communication
   // Serial.begin(9600);
@@ -377,18 +394,15 @@ bool setup(ros::NodeHandle &nh)
 
   ROS_INFO("nrf24 initialization succeeded");
 
-  ensure_export(GPIO_LIFT);
-  ensure_set_dir(GPIO_LIFT, OUTPUT);
-  ensure_export(GPIO_ROTATER);
-  ensure_set_dir(GPIO_ROTATER, OUTPUT);
-  ensure_export(GPIO_APWR);
-  ensure_set_dir(GPIO_APWR, OUTPUT);
-  ensure_export(GPIO_ADIR);
-  ensure_set_dir(GPIO_ADIR, OUTPUT);
-  ensure_export(GPIO_BDIR);
-  ensure_set_dir(GPIO_BDIR, OUTPUT);
-  ensure_export(GPIO_BPWR);
-  ensure_set_dir(GPIO_BPWR, OUTPUT);
+  GPIO::setup(GPIO_LIFT, GPIO::Directions::OUT);
+  GPIO::setup(GPIO_ROTATER, GPIO::Directions::OUT);
+  GPIO::setup(GPIO_APWR, GPIO::Directions::OUT);
+  GPIO::setup(GPIO_ADIR, GPIO::Directions::OUT);
+  GPIO::setup(GPIO_BDIR, GPIO::Directions::OUT);
+  GPIO::setup(GPIO_BPWR, GPIO::Directions::OUT);
+
+  GPIO::setup(GPIO_AENC, GPIO::Directions::IN);
+  GPIO::setup(GPIO_BENC, GPIO::Directions::IN);
 
   // Begin Motor Threads
   int rc;
@@ -396,9 +410,10 @@ bool setup(ros::NodeHandle &nh)
   motorA.doExit = false;
   motorA.doPause = false;
   motorA.finished = false;
-  motorA.drive_gpio = GPIO_APWR;
-  motorA.dir_gpio = GPIO_ADIR;
+  motorA.drive_channel = GPIO_APWR;
+  motorA.dir_channel = GPIO_ADIR;
   motorA.dir = 0;
+  motorA.enc_register = 0;
   motorA.power = 0.f;
   motorA.name = "MotorA";
   if ((rc = pthread_create(&motorA.tid, NULL, motorThread, &motorA))) {
@@ -409,15 +424,19 @@ bool setup(ros::NodeHandle &nh)
   motorB.doExit = false;
   motorB.doPause = false;
   motorB.finished = false;
-  motorB.drive_gpio = GPIO_BPWR;
-  motorB.dir_gpio = GPIO_BDIR;
+  motorB.drive_channel = GPIO_BPWR;
+  motorB.dir_channel = GPIO_BDIR;
   motorB.dir = 0;
+  motorB.enc_register = 0;
   motorB.power = 0.f;
   motorB.name = "MotorB";
   if ((rc = pthread_create(&motorB.tid, NULL, motorThread, &motorB))) {
     fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
     return EXIT_FAILURE;
   }
+
+  GPIO::add_event_detect(GPIO_AENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
+  GPIO::add_event_detect(GPIO_BENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
 
   return true;
 }
@@ -618,9 +637,19 @@ void cleanup()
     // TODO pthread_abort handling
   }
 
-  // TODO -- unexport??
-  gpio_unexport(13);
-  gpio_unexport(19);
+  // Unexport gpios
+  GPIO::cleanup(GPIO_AENC);
+  GPIO::cleanup(GPIO_BENC);
+
+  GPIO::cleanup(GPIO_LIFT);
+  GPIO::cleanup(GPIO_ROTATER);
+  GPIO::cleanup(GPIO_APWR);
+  GPIO::cleanup(GPIO_ADIR);
+  GPIO::cleanup(GPIO_BDIR);
+  GPIO::cleanup(GPIO_BPWR);
+
+  GPIO::cleanup(19);
+  GPIO::cleanup(13);
 }
 
 int main(int argc, char **argv)

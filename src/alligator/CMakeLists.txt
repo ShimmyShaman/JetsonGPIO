@@ -4,8 +4,12 @@ project(alligator)
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
 
+set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
+message("-- CMAKE_MODULE_PATH=${CMAKE_MODULE_PATH}")
+
 find_package(OpenCV REQUIRED)
 find_package(CUDA REQUIRED)
+find_package(JetsonGPIO REQUIRED)
 message("-- CUDA version: ${CUDA_VERSION}")
 
 find_package(PkgConfig REQUIRED)
@@ -134,6 +138,7 @@ include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${JetsonGPIO_INCLUDE_DIRS}
   ${CUDA_INCLUDE_DIRS}
   ${GST_INCLUDE_DIRS}
 )
@@ -187,7 +192,7 @@ target_include_directories(jetson_nano_radiohead PUBLIC src/JetsonNanoRadiohead 
 # # add_dependencies(object_detector alligator_gencpp)
 
 add_executable(rf_control src/rf_control.cpp )
-target_link_libraries(rf_control ${OpenCV_LIBS} ${catkin_LIBRARIES} jetson_nano_radiohead )
+target_link_libraries(rf_control ${JetsonGPIO_LIBRARIES} ${OpenCV_LIBS} ${catkin_LIBRARIES} jetson_nano_radiohead )
 # add_dependencies(rf_control alligator_gencpp)
 
 # add_executable(video_writer src/video_writer.cpp )

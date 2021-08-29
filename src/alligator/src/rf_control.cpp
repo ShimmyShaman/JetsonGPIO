@@ -10,7 +10,6 @@
 // #include <string.h>
 // #include <time.h>
 // #include <math.h>
-#include <atomic>
 #include <dirent.h>
 #include <fcntl.h>
 #include <ros/ros.h>
@@ -19,6 +18,8 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+
+#include <atomic>
 // #include "ros_compat.h"
 
 #include <image_transport/image_transport.h>
@@ -32,15 +33,21 @@
 #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
 #include <JetsonGPIO.h>
 
+#include "std_srvs/Empty.h"
+
 #define GPIO_LIFT 29    /*149*/
 #define GPIO_ROTATER 31 /*200*/
 #define GPIO_APWR 32    /*168*/
 #define GPIO_ADIR 36    /*51*/
-#define GPIO_BPWR 37    /*12*/
+#define GPIO_BPWR 33    /*38*/
 #define GPIO_BDIR 35    /*76*/
+#define GPIO_UNUSED 37  /*12*/
 
 #define GPIO_AENC 7  /*216*/
 #define GPIO_BENC 11 /*50*/
+
+#define GPIO_NRF_CE 22 /*13*/
+#define GPIO_NRF_SS 24 /*19*/
 
 // COMMON SECTION
 // This section must be kept in sync between the Nano-side Collector App and the
@@ -97,8 +104,8 @@ MotorThreadData motorA, motorB;
 
 // Singleton instance of the radio driver
 
-RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
-                        // 22, 24 respectively, [ChipEnable, SlaveSelect])
+RH_NRF24 nrf24(GPIO_NRF_CE, GPIO_NRF_SS); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
+                                          // 22, 24 respectively, [ChipEnable, SlaveSelect])
 
 uint32_t captureTransferDelay = 0;
 const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
@@ -422,10 +429,8 @@ bool setup(ros::NodeHandle &nh)
 
   // GPIO::setup(13, GPIO::Directions::OUT);
   // GPIO::setup(19, GPIO::Directions::OUT);
-  ensure_export(13);
-  ensure_export(19);
-
-  // GP
+  ensure_export(GPIO_NRF_CE);
+  ensure_export(GPIO_NRF_SS);
 
   // Begin RF Communication
   // Serial.begin(9600);
@@ -712,8 +717,8 @@ void cleanup()
 
   // GPIO::cleanup(19);
   // GPIO::cleanup(13);
-  gpio_unexport(13);
-  gpio_unexport(19);
+  gpio_unexport(GPIO_NRF_SS);
+  gpio_unexport(GPIO_NRF_CE);
 }
 
 int main(int argc, char **argv)

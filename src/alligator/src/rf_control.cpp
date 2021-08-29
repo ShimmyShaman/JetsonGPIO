@@ -10,7 +10,6 @@
 // #include <string.h>
 // #include <time.h>
 // #include <math.h>
-#include <atomic>
 #include <dirent.h>
 #include <fcntl.h>
 #include <ros/ros.h>
@@ -19,6 +18,8 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
+
+#include <atomic>
 // #include "ros_compat.h"
 
 #include <image_transport/image_transport.h>
@@ -27,19 +28,23 @@
 
 #include "JetsonNanoRadiohead/RH_NRF24.h"
 // #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
-#include "std_srvs/Empty.h"
-
 #include <JetsonGPIO.h>
+
+#include "std_srvs/Empty.h"
 
 #define GPIO_LIFT 29    /*149*/
 #define GPIO_ROTATER 31 /*200*/
 #define GPIO_APWR 32    /*168*/
 #define GPIO_ADIR 36    /*51*/
-#define GPIO_BPWR 37    /*12*/
+#define GPIO_BPWR 33    /*12*/
 #define GPIO_BDIR 35    /*76*/
+#define GPIO_UNUSED 37  /*12*/
 
 #define GPIO_AENC 7  /*216*/
 #define GPIO_BENC 11 /*50*/
+
+#define GPIO_NRF_CE 22 /*13*/
+#define GPIO_NRF_SS 24 /*19*/
 
 // COMMON SECTION
 // This section must be kept in sync between the Nano-side Collector App and the
@@ -83,7 +88,7 @@ enum ControllerModeType {
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_channel, dir_channel;
-  float power; // (0->1)
+  float power;  // (0->1)
   int dir;
   std::atomic<unsigned int> enc_register;
   bool doExit;
@@ -96,8 +101,8 @@ MotorThreadData motorA, motorB;
 
 // Singleton instance of the radio driver
 
-RH_NRF24 nrf24(13, 19); // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
-                        // 22, 24 respectively, [ChipEnable, SlaveSelect])
+RH_NRF24 nrf24(GPIO_NRF_CE, GPIO_NRF_SS);  // For the Nvidia Jetson Nano (gpio pins 13, 19 are J41
+                                           // 22, 24 respectively, [ChipEnable, SlaveSelect])
 
 uint32_t captureTransferDelay = 0;
 const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
@@ -138,7 +143,7 @@ void *motorThread(void *arg)
   // DEBUG
 
   unsigned int prev_enc_sig = 0U;
-  float est_speed = 0.f; // in mm per second -- running average
+  float est_speed = 0.f;  // in mm per second -- running average
 
   while (!m->doExit) {
     if (m->doPause) {
@@ -358,8 +363,8 @@ bool setup(ros::NodeHandle &nh)
 
   GPIO::setmode(GPIO::BOARD);
 
-  GPIO::setup(13, GPIO::Directions::OUT);
-  GPIO::setup(19, GPIO::Directions::OUT);
+  GPIO::setup(GPIO_NRF_CE, GPIO::Directions::OUT);
+  GPIO::setup(GPIO_NRF_SS, GPIO::Directions::OUT);
 
   // Begin RF Communication
   // Serial.begin(9600);
@@ -648,8 +653,8 @@ void cleanup()
   GPIO::cleanup(GPIO_BDIR);
   GPIO::cleanup(GPIO_BPWR);
 
-  GPIO::cleanup(19);
-  GPIO::cleanup(13);
+  GPIO::cleanup(GPIO_NRF_SS);
+  GPIO::cleanup(GPIO_NRF_CE);
 }
 
 int main(int argc, char **argv)

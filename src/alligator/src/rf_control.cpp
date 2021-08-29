@@ -29,6 +29,7 @@
 // #include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
 #include "std_srvs/Empty.h"
 
+#include "JetsonNanoRadiohead/RHutil/JetsonNano_gpio.h"
 #include <JetsonGPIO.h>
 
 #define GPIO_LIFT 29    /*149*/
@@ -83,7 +84,7 @@ enum ControllerModeType {
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_channel, dir_channel;
-  float power; // (0->1)
+  float target_speed, est_speed; // in mm per second -- running average
   int dir;
   std::atomic<unsigned int> enc_register;
   bool doExit;
@@ -104,7 +105,7 @@ const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
 const char *USB_CAPTURE_FOLDER = "/media/boo/transcend/captures";
 
 // Speed in mm per second
-int maxSpeed;
+int max_speed;
 
 // The mode (RCOverride or Autonomous)
 enum ControllerModeType current_mode;
@@ -138,9 +139,16 @@ void *motorThread(void *arg)
   // DEBUG
 
   unsigned int prev_enc_sig = 0U;
-  float est_speed = 0.f; // in mm per second -- running average
+  int power = 0;
+  const int MAX_POWER = 998;
+
+  const unsigned int BIN_SIZE = 500;
+  unsigned int sigbin[BIN_SIZE], si = 0, sigtot = 0, diff;
+  memset(sigbin, 0, sizeof(sigbin));
 
   while (!m->doExit) {
+    // m->target_speed = 300.f;
+
     if (m->doPause) {
       GPIO::output(m->drive_channel, 0);
       // ensure_set_value(m->drive_channel, 0);
@@ -151,30 +159,84 @@ void *motorThread(void *arg)
       // Stop this from continuing on if main thread collapses
     }
 
-    // Update
-    float mex = m->power * maxSpeed;
-    mex = mex > maxSpeed ? maxSpeed : mex;
+    // Update the wheel rotation
+    ++si;
+    if (si >= BIN_SIZE)
+      si -= BIN_SIZE;
 
-    int diff = m->enc_register - prev_enc_sig;
+    diff = m->enc_register - prev_enc_sig;
     prev_enc_sig = m->enc_register;
+    sigtot += diff - sigbin[si];
+    sigbin[si] = diff;
 
-    // 225 encoder signals per turn - 30cm per turn : 1.2 mm per signal
-    est_speed = est_speed * 0.999f + 0.001f * 1.2f * diff;
+    // -- 225 encoder signals per turn - 30cm per turn : 1.2 mm per signal
+    m->est_speed = 1000.f / BIN_SIZE * 1.2f * sigtot;
 
-    if (est_speed < mex) {
-      if (m->dir != setDir) {
-        setDir = m->dir;
-        GPIO::output(m->dir_channel, setDir);
-      }
+    if (m->dir != setDir) {
+      // Wrong way
+      setDir = m->dir;
+      GPIO::output(m->dir_channel, setDir);
+      power = 0;
+      usleep(999);
+      continue;
+    }
+    if (m->target_speed == 0.f) {
+      power = 0;
+      usleep(999);
+      continue;
+    }
 
-      GPIO::output(m->drive_channel, 1);
-      usleep(998);
-      GPIO::output(m->drive_channel, 0);
+    // power = 100;
+
+    // else {
+
+    // if (si % 40 == 0) {
+    if (m->est_speed < m->target_speed) {
+      if (power < MAX_POWER)
+        ++power;
     }
     else {
-      GPIO::output(m->drive_channel, 0);
-      usleep(998);
+      if (power > 0)
+        --power;
     }
+    // }
+    //   // Adjust speed
+    //   float ratio;
+    //   if (m->est_speed)
+    //     ratio = m->target_speed / m->est_speed;
+    //   else
+    //     ratio = 2;
+
+    //   float sign = 1;
+    //   if (m->est_speed > m->target_speed) {
+    //     ratio = 1.f / ratio;
+    //     sign = -1;
+    //   }
+
+    //   float pwr_chg = sign * 1; //((ratio - 1.f) * 5 + pow(ratio, 7));
+    //   power += (int)pwr_chg;
+    //   if (power < 0)
+    //     power = 0;
+    //   else if (power > MAX_POWER)
+    //     power = MAX_POWER;
+
+    // // DEBUG
+    // if (si == 0 && !strcmp(m->name, "MotorA")) {
+    //   ROS_INFO("Speed: motorA:[%i]%.2f(%.2f) motorB:%.2f(%.2f)", power, motorA.est_speed, motorA.target_speed,
+    //            motorB.est_speed, motorB.target_speed);
+    // }
+    // if (!strcmp(m->name, "MotorB") && si == 9) {
+    //   printf("dir:%i\n", m->dir_channel);
+    // }
+    // // DEBUG
+
+    if (power) {
+      GPIO::output(m->drive_channel, 1);
+      usleep(power);
+    }
+    GPIO::output(m->drive_channel, 0);
+    if (power < MAX_POWER)
+      usleep(MAX_POWER - power);
   }
 
   GPIO::output(m->drive_channel, 0);
@@ -209,14 +271,14 @@ int cp(const char *source, const char *destination)
 void changeMode(enum ControllerModeType mode)
 {
   if (current_mode == CONTROLLER_MODE_AUTONOMOUS && mode == CONTROLLER_MODE_RCOVERRIDE) {
-    motorA.power = 0;
-    motorB.power = 0;
+    motorA.target_speed = 0;
+    motorB.target_speed = 0;
   }
 
   if (mode == CONTROLLER_MODE_AUTONOMOUS) {
-    motorA.power = 1;
+    motorA.target_speed = MOTOR_SET_SPEED_5;
     motorA.dir = 1;
-    motorB.power = 1;
+    motorB.target_speed = MOTOR_SET_SPEED_5;
     motorB.dir = 0;
   }
 
@@ -350,7 +412,7 @@ void transferSessionCaptures()
 bool setup(ros::NodeHandle &nh)
 {
   current_mode = CONTROLLER_MODE_AUTONOMOUS;
-  maxSpeed = MOTOR_SET_SPEED_5;
+  max_speed = MOTOR_SET_SPEED_5;
 
   // Image Saver
   save_image_client = nh.serviceClient<std_srvs::Empty>("/image_view/save");
@@ -358,15 +420,22 @@ bool setup(ros::NodeHandle &nh)
 
   GPIO::setmode(GPIO::BOARD);
 
-  GPIO::setup(13, GPIO::Directions::OUT);
-  GPIO::setup(19, GPIO::Directions::OUT);
+  // GPIO::setup(13, GPIO::Directions::OUT);
+  // GPIO::setup(19, GPIO::Directions::OUT);
+  ensure_export(13);
+  ensure_export(19);
+
+  // GP
 
   // Begin RF Communication
   // Serial.begin(9600);
   ROS_INFO("initializing...");
   bool scs;
   int r = 100;
-  while (1) {
+  while (true) {
+    if (!ros::ok() || shutdown_requested)
+      return false;
+
     scs = nrf24.init();
     if (scs) {
       ROS_INFO("nrf24.init() succeeded");
@@ -407,28 +476,32 @@ bool setup(ros::NodeHandle &nh)
   // Begin Motor Threads
   int rc;
 
-  motorA.doExit = false;
-  motorA.doPause = false;
-  motorA.finished = false;
+  memset(&motorA, 0, sizeof(MotorThreadData));
+  // motorA.doExit = false;
+  // motorA.doPause = false;
+  // motorA.finished = false;
   motorA.drive_channel = GPIO_APWR;
   motorA.dir_channel = GPIO_ADIR;
-  motorA.dir = 0;
-  motorA.enc_register = 0;
-  motorA.power = 0.f;
+  // motorA.dir = 0;
+  // motorA.enc_register = 0;
+  // motorA.target_speed = 0.f;
+  // motorA.est_speed = 0.f;
   motorA.name = "MotorA";
   if ((rc = pthread_create(&motorA.tid, NULL, motorThread, &motorA))) {
     fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
     return EXIT_FAILURE;
   }
 
-  motorB.doExit = false;
-  motorB.doPause = false;
-  motorB.finished = false;
+  memset(&motorB, 0, sizeof(MotorThreadData));
+  // motorB.doExit = false;
+  // motorB.doPause = false;
+  // motorB.finished = false;
   motorB.drive_channel = GPIO_BPWR;
   motorB.dir_channel = GPIO_BDIR;
-  motorB.dir = 0;
-  motorB.enc_register = 0;
-  motorB.power = 0.f;
+  // motorB.dir = 0;
+  // motorB.enc_register = 0;
+  // motorB.target_speed = 0.f;
+  // motorB.est_speed = 0.f;
   motorB.name = "MotorB";
   if ((rc = pthread_create(&motorB.tid, NULL, motorThread, &motorB))) {
     fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
@@ -481,8 +554,8 @@ void loop()
             ROS_INFO("CONNECT_RCOVER");
             break;
           case COMMUNICATION_RCIDLE: {
-            motorA.power = 0;
-            motorB.power = 0;
+            motorA.target_speed = 0;
+            motorB.target_speed = 0;
           } break;
           case COMMUNICATION_RCMOVE: {
             changeMode(CONTROLLER_MODE_RCOVERRIDE);
@@ -490,68 +563,57 @@ void loop()
             float jx = (float)buf[SIG_LEN + 1], jy = (float)buf[SIG_LEN + 2];
 
             // DEBUG
-            // maxSpeed = MOTOR_SET_SPEED_5;
+            // max_speed = MOTOR_SET_SPEED_5;
             // printf("[0]:%.1f  [1]:%.1f\n", jx, jy);
             // DEBUG
 
             const float THRES = 4.f, MID = 63.5;
             if (jx > MID - THRES && jx < MID + THRES && jy > MID - THRES && jy < MID + THRES) {
-              motorA.power = 0;
-              motorB.power = 0;
+              motorA.target_speed = 0;
+              motorB.target_speed = 0;
             }
             else {
+              // Because the motors are orientated in opposite directions
+              //  (one pointed towards left, other right)
               motorA.dir = jx > MID ? 1 : 0;
               motorB.dir = jy > MID ? 0 : 1;
 
-              motorA.power = abs((jx - MID) * 1.05f) / MID;
-              motorB.power = abs((jy - MID) * 1.05f) / MID;
+              motorA.target_speed = abs((jx - MID) * 1.05f) / MID * max_speed;
+              if (motorA.target_speed > max_speed)
+                motorA.target_speed = max_speed;
+              motorB.target_speed = abs((jy - MID) * 1.05f) / MID * max_speed;
+              if (motorB.target_speed > max_speed)
+                motorB.target_speed = max_speed;
             }
-
-            // // TODO check this is okay with 127 no movement
-            // motorA.power = ((float)buf[SIG_LEN + 1] - 127.f) / 128.f;
-            // if (motorA.power < 0) {
-            //   motorA.dir = 1;
-            //   motorA.power = -motorA.power;
-            // }
-            // else {
-            //   motorA.dir = 0;
-            // }
-            // motorB.power = 1.f;//((float)buf[SIG_LEN + 2] - 127.f) / 128.f;
-            // if (motorB.power < 0) {
-            //   motorB.dir = 1;
-            //   motorB.power = -motorB.power;
-            // }
-            // else {
-            //   motorB.dir = 0;
-            // }
 
             // TODO -- Not sending a packet uid to verify -- make it cleaner
             // replyComConfirm = false;
             confirmPacketUID = PID_COUNTER_EMAX;
-            printf("CONNECT_RCMOVE: A[%i, %.3f] B[%i, %.3f]\n", motorA.dir, motorA.power, motorB.dir, motorB.power);
+            printf("CONNECT_RCMOVE: A[%i, %.3f] B[%i, %.3f]\n", motorA.dir, motorA.target_speed, motorB.dir,
+                   motorB.target_speed);
           } break;
           case COMMUNICATION_NANO_SHUTDOWN:
             ROS_INFO("Nano Shutdown");
             shutdown_requested = true;
             break;
           case COMMUNICATION_SPEED_SET_1:
-            maxSpeed = MOTOR_SET_SPEED_1;
+            max_speed = MOTOR_SET_SPEED_1;
             ROS_INFO("Speed Set to MOTOR_SET_SPEED_1");
             break;
           case COMMUNICATION_SPEED_SET_2:
-            maxSpeed = MOTOR_SET_SPEED_2;
+            max_speed = MOTOR_SET_SPEED_2;
             ROS_INFO("Speed Set to MOTOR_SET_SPEED_2");
             break;
           case COMMUNICATION_SPEED_SET_3:
-            maxSpeed = MOTOR_SET_SPEED_3;
+            max_speed = MOTOR_SET_SPEED_3;
             ROS_INFO("Speed Set to MOTOR_SET_SPEED_3");
             break;
           case COMMUNICATION_SPEED_SET_4:
-            maxSpeed = MOTOR_SET_SPEED_4;
+            max_speed = MOTOR_SET_SPEED_4;
             ROS_INFO("Speed Set to MOTOR_SET_SPEED_4");
             break;
           case COMMUNICATION_SPEED_SET_5:
-            maxSpeed = MOTOR_SET_SPEED_5;
+            max_speed = MOTOR_SET_SPEED_5;
             ROS_INFO("Speed Set to MOTOR_SET_SPEED_5");
             break;
           case COMMUNICATION_CAPTURE_IMAGE:
@@ -648,8 +710,10 @@ void cleanup()
   GPIO::cleanup(GPIO_BDIR);
   GPIO::cleanup(GPIO_BPWR);
 
-  GPIO::cleanup(19);
-  GPIO::cleanup(13);
+  // GPIO::cleanup(19);
+  // GPIO::cleanup(13);
+  gpio_unexport(13);
+  gpio_unexport(19);
 }
 
 int main(int argc, char **argv)

@@ -46,8 +46,9 @@
 #define GPIO_AENC 7  /*216*/
 #define GPIO_BENC 11 /*50*/
 
-#define GPIO_NRF_CE 22 /*13*/
-#define GPIO_NRF_SS 24 /*19*/
+#define GPIO_NRF_CE 13  // 22  /*13*/
+#define GPIO_NRF_SS 19  // 24  /*19*/
+#define GPIO_NRF_IRQ 26 /*20*/
 
 // COMMON SECTION
 // This section must be kept in sync between the Nano-side Collector App and the
@@ -82,16 +83,16 @@ enum ControllerModeType {
 };
 // END-SECTION
 // Speed in mm per second
-#define MOTOR_SET_SPEED_1 250
-#define MOTOR_SET_SPEED_2 500
-#define MOTOR_SET_SPEED_3 750
-#define MOTOR_SET_SPEED_4 1000
+#define MOTOR_SET_SPEED_1 200
+#define MOTOR_SET_SPEED_2 400
+#define MOTOR_SET_SPEED_3 600
+#define MOTOR_SET_SPEED_4 800
 #define MOTOR_SET_SPEED_5 2000
 
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_channel, dir_channel;
-  float target_speed, est_speed; // in mm per second -- running average
+  std::atomic<float> power, est_speed; // in mm per second -- running average
   int dir;
   std::atomic<unsigned int> enc_register;
   bool doExit;
@@ -100,7 +101,7 @@ typedef struct MotorThreadData {
   const char *name;
 } MotorThreadData;
 
-MotorThreadData motorA, motorB;
+MotorThreadData motorL, motorR;
 
 // Singleton instance of the radio driver
 
@@ -112,7 +113,7 @@ const char *CAPTURE_DIR = "/home/boo/proj/roscol/captures";
 const char *USB_CAPTURE_FOLDER = "/media/boo/transcend/captures";
 
 // Speed in mm per second
-int max_speed;
+std::atomic<int> max_speed;
 
 // The mode (RCOverride or Autonomous)
 enum ControllerModeType current_mode;
@@ -126,10 +127,10 @@ void motor_encoding_signal_callback(int channel)
 {
   switch (channel) {
     case GPIO_AENC:
-      ++motorA.enc_register;
+      ++motorL.enc_register;
       break;
     case GPIO_BENC:
-      ++motorB.enc_register;
+      ++motorR.enc_register;
       break;
   }
 }
@@ -140,33 +141,55 @@ void *motorThread(void *arg)
   ROS_INFO("%s thread opened!", m->name);
 
   int setDir = 99999;
+  unsigned int prev_enc_sig = 0U;
+  double duty_cycle = 0;
+
+  GPIO::PWM pwm(m->drive_channel, 50);
+  pwm.start(0);
 
   // DEBUG
   int dn = 0;
   // DEBUG
 
-  unsigned int prev_enc_sig = 0U;
-  int power = 0;
-  const int MAX_POWER = 998;
-
-  const unsigned int BIN_SIZE = 500;
+  const unsigned int BIN_SIZE = 25;
+  // struct {
+  //   float signals;
+  // } samples[20];
   unsigned int sigbin[BIN_SIZE], si = 0, sigtot = 0, diff;
   memset(sigbin, 0, sizeof(sigbin));
 
+  float prev_error = 0, error = 0, int_err = 0, dt_err = 0;
+
+  // struct timespec start_time;
+  // clock_gettime(CLOCK_REALTIME, &start_time);
+
   while (!m->doExit) {
-    // m->target_speed = 300.f;
+    pwm.ChangeDutyCycle(duty_cycle);
+
+    // Sleep
+    usleep(40000);
 
     if (m->doPause) {
-      GPIO::output(m->drive_channel, 0);
+      pwm.ChangeDutyCycle(0);
+      // GPIO::output(m->drive_channel, 0);
       // ensure_set_value(m->drive_channel, 0);
-      usleep(1000);
       continue;
     }
     else {
       // Stop this from continuing on if main thread collapses
+      // Not implemented atm -- maybe not at all
     }
 
-    // Update the wheel rotation
+    // DEBUG
+    // int c = !strcmp(m->name, "MotorL");
+    // m->target_speed = (strcmp(m->name, "MotorL")) ? 1600.f : 800.f;
+    // printf("%s] c=%i ts=%.1f\n", m->name, c, m->target_speed);
+    // if (!strcmp(m->name, "MotorR") && si == 9) {
+    //   printf("dir:%i\n", m->dir_channel);
+    // }
+    // DEBUG
+
+    // Sample the wheel rotation speed
     ++si;
     if (si >= BIN_SIZE)
       si -= BIN_SIZE;
@@ -176,77 +199,59 @@ void *motorThread(void *arg)
     sigtot += diff - sigbin[si];
     sigbin[si] = diff;
 
+    // Estimate speed in mm.s-1
     // -- 225 encoder signals per turn - 30cm per turn : 1.2 mm per signal
-    m->est_speed = 1000.f / BIN_SIZE * 1.2f * sigtot;
+    m->est_speed = 1.2f * sigtot / (BIN_SIZE * 0.04f);
 
     if (m->dir != setDir) {
       // Wrong way
       setDir = m->dir;
       GPIO::output(m->dir_channel, setDir);
-      power = 0;
-      usleep(999);
+      duty_cycle = 0;
       continue;
     }
-    if (m->target_speed == 0.f) {
-      power = 0;
-      usleep(999);
+    else if (!m->power) {
+      duty_cycle = 0;
       continue;
     }
 
-    // power = 100;
+    // Determine the duty cycle
+    float target_speed = m->power * max_speed;
+    float error = m->est_speed - target_speed;
 
-    // else {
+    // Proportional
+    float pe = -error * 0.0018f;
 
-    // if (si % 40 == 0) {
-    if (m->est_speed < m->target_speed) {
-      if (power < MAX_POWER)
-        ++power;
+    // Integral
+    int_err = int_err * 0.95f + error;
+    float ie = -int_err * 0.00005f;
+
+    // Derivative Error
+    dt_err = 0.95f * (error - prev_error);
+    prev_error = error;
+    float de = -dt_err * 0.02f;
+
+    // DEBUG
+    // if (!strcmp(m->name, "MotorL")) {
+    if (si % 12 == 0) {
+      // ROS_INFO("Speed: motorL:[%i]%.2f(%.2f) motorR:%.2f(%.2f)", power, motorL.est_speed, motorL.target_speed,
+      //          motorR.est_speed, motorR.target_speed);
+      float est_speed = m->est_speed;
+      printf("%s] DC:%.0f tar:%.2f est:%.2f err:%.2f > P:%.2f IE:%.2f DE:%.2f Dir:%i\n", m->name, duty_cycle,
+             target_speed, est_speed, error, pe, ie, de, m->dir);
     }
-    else {
-      if (power > 0)
-        --power;
-    }
-    // }
-    //   // Adjust speed
-    //   float ratio;
-    //   if (m->est_speed)
-    //     ratio = m->target_speed / m->est_speed;
-    //   else
-    //     ratio = 2;
+    // DEBUG
 
-    //   float sign = 1;
-    //   if (m->est_speed > m->target_speed) {
-    //     ratio = 1.f / ratio;
-    //     sign = -1;
-    //   }
-
-    //   float pwr_chg = sign * 1; //((ratio - 1.f) * 5 + pow(ratio, 7));
-    //   power += (int)pwr_chg;
-    //   if (power < 0)
-    //     power = 0;
-    //   else if (power > MAX_POWER)
-    //     power = MAX_POWER;
-
-    // // DEBUG
-    // if (si == 0 && !strcmp(m->name, "MotorA")) {
-    //   ROS_INFO("Speed: motorA:[%i]%.2f(%.2f) motorB:%.2f(%.2f)", power, motorA.est_speed, motorA.target_speed,
-    //            motorB.est_speed, motorB.target_speed);
-    // }
-    // if (!strcmp(m->name, "MotorB") && si == 9) {
-    //   printf("dir:%i\n", m->dir_channel);
-    // }
-    // // DEBUG
-
-    if (power) {
-      GPIO::output(m->drive_channel, 1);
-      usleep(power);
-    }
-    GPIO::output(m->drive_channel, 0);
-    if (power < MAX_POWER)
-      usleep(MAX_POWER - power);
+    // Update & Clamp
+    duty_cycle += (double)(pe + ie + de);
+    if (duty_cycle > 100)
+      duty_cycle = 100;
+    else if (duty_cycle < 0)
+      duty_cycle = 0;
   }
 
-  GPIO::output(m->drive_channel, 0);
+  pwm.stop();
+  // GPIO::output(m->drive_channel, 0);
   m->finished = true;
   ROS_INFO("%s thread-closed", m->name);
   pthread_exit(NULL);
@@ -278,15 +283,15 @@ int cp(const char *source, const char *destination)
 void changeMode(enum ControllerModeType mode)
 {
   if (current_mode == CONTROLLER_MODE_AUTONOMOUS && mode == CONTROLLER_MODE_RCOVERRIDE) {
-    motorA.target_speed = 0;
-    motorB.target_speed = 0;
+    motorL.power = 0;
+    motorR.power = 0;
   }
 
   if (mode == CONTROLLER_MODE_AUTONOMOUS) {
-    motorA.target_speed = MOTOR_SET_SPEED_5;
-    motorA.dir = 1;
-    motorB.target_speed = MOTOR_SET_SPEED_5;
-    motorB.dir = 0;
+    motorL.power = 1;
+    motorL.dir = 1;
+    motorR.power = 1;
+    motorR.dir = 0;
   }
 
   current_mode = mode;
@@ -428,7 +433,7 @@ bool setup(ros::NodeHandle &nh)
   GPIO::setmode(GPIO::BOARD);
 
   // GPIO::setup(13, GPIO::Directions::OUT);
-  // GPIO::setup(19, GPIO::Directions::OUT);
+  GPIO::setup(GPIO_NRF_IRQ, GPIO::Directions::IN);
   ensure_export(GPIO_NRF_CE);
   ensure_export(GPIO_NRF_SS);
 
@@ -481,34 +486,34 @@ bool setup(ros::NodeHandle &nh)
   // Begin Motor Threads
   int rc;
 
-  memset(&motorA, 0, sizeof(MotorThreadData));
-  // motorA.doExit = false;
-  // motorA.doPause = false;
-  // motorA.finished = false;
-  motorA.drive_channel = GPIO_APWR;
-  motorA.dir_channel = GPIO_ADIR;
-  // motorA.dir = 0;
-  // motorA.enc_register = 0;
-  // motorA.target_speed = 0.f;
-  // motorA.est_speed = 0.f;
-  motorA.name = "MotorA";
-  if ((rc = pthread_create(&motorA.tid, NULL, motorThread, &motorA))) {
+  memset(&motorL, 0, sizeof(MotorThreadData));
+  // motorL.doExit = false;
+  // motorL.doPause = false;
+  // motorL.finished = false;
+  motorL.drive_channel = GPIO_APWR;
+  motorL.dir_channel = GPIO_ADIR;
+  // motorL.dir = 0;
+  // motorL.enc_register = 0;
+  // motorL.target_speed = 0.f;
+  // motorL.est_speed = 0.f;
+  motorL.name = "MotorL";
+  if ((rc = pthread_create(&motorL.tid, NULL, motorThread, &motorL))) {
     fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
     return EXIT_FAILURE;
   }
 
-  memset(&motorB, 0, sizeof(MotorThreadData));
-  // motorB.doExit = false;
-  // motorB.doPause = false;
-  // motorB.finished = false;
-  motorB.drive_channel = GPIO_BPWR;
-  motorB.dir_channel = GPIO_BDIR;
-  // motorB.dir = 0;
-  // motorB.enc_register = 0;
-  // motorB.target_speed = 0.f;
-  // motorB.est_speed = 0.f;
-  motorB.name = "MotorB";
-  if ((rc = pthread_create(&motorB.tid, NULL, motorThread, &motorB))) {
+  memset(&motorR, 0, sizeof(MotorThreadData));
+  // motorR.doExit = false;
+  // motorR.doPause = false;
+  // motorR.finished = false;
+  motorR.drive_channel = GPIO_BPWR;
+  motorR.dir_channel = GPIO_BDIR;
+  // motorR.dir = 0;
+  // motorR.enc_register = 0;
+  // motorR.target_speed = 0.f;
+  // motorR.est_speed = 0.f;
+  motorR.name = "MotorR";
+  if ((rc = pthread_create(&motorR.tid, NULL, motorThread, &motorR))) {
     fprintf(stderr, "error: pthread_create, rc: %d\n", rc);
     return EXIT_FAILURE;
   }
@@ -559,8 +564,8 @@ void loop()
             ROS_INFO("CONNECT_RCOVER");
             break;
           case COMMUNICATION_RCIDLE: {
-            motorA.target_speed = 0;
-            motorB.target_speed = 0;
+            motorL.power = 0;
+            motorR.power = 0;
           } break;
           case COMMUNICATION_RCMOVE: {
             changeMode(CONTROLLER_MODE_RCOVERRIDE);
@@ -574,28 +579,28 @@ void loop()
 
             const float THRES = 4.f, MID = 63.5;
             if (jx > MID - THRES && jx < MID + THRES && jy > MID - THRES && jy < MID + THRES) {
-              motorA.target_speed = 0;
-              motorB.target_speed = 0;
+              motorL.power = 0;
+              motorR.power = 0;
             }
             else {
               // Because the motors are orientated in opposite directions
               //  (one pointed towards left, other right)
-              motorA.dir = jx > MID ? 1 : 0;
-              motorB.dir = jy > MID ? 0 : 1;
+              motorL.dir = jx > MID ? 1 : 0;
+              motorR.dir = jy > MID ? 0 : 1;
 
-              motorA.target_speed = abs((jx - MID) * 1.05f) / MID * max_speed;
-              if (motorA.target_speed > max_speed)
-                motorA.target_speed = max_speed;
-              motorB.target_speed = abs((jy - MID) * 1.05f) / MID * max_speed;
-              if (motorB.target_speed > max_speed)
-                motorB.target_speed = max_speed;
+              motorL.power = abs((jx - MID) * 1.05f) / MID;
+              if (motorL.power > 1.f)
+                motorL.power = 1.f;
+              motorR.power = abs((jy - MID) * 1.05f) / MID;
+              if (motorR.power > 1.f)
+                motorR.power = 1.f;
             }
 
             // TODO -- Not sending a packet uid to verify -- make it cleaner
             // replyComConfirm = false;
             confirmPacketUID = PID_COUNTER_EMAX;
-            printf("CONNECT_RCMOVE: A[%i, %.3f] B[%i, %.3f]\n", motorA.dir, motorA.target_speed, motorB.dir,
-                   motorB.target_speed);
+            printf("CONNECT_RCMOVE: A[%i, %.3f] B[%i, %.3f]\n", motorL.dir, motorL.power * max_speed, motorR.dir,
+                   motorR.power * max_speed);
           } break;
           case COMMUNICATION_NANO_SHUTDOWN:
             ROS_INFO("Nano Shutdown");
@@ -681,7 +686,7 @@ void loop()
 void cleanup()
 {
   // End Motor Threads
-  motorA.doExit = motorB.doExit = true;
+  motorL.doExit = motorR.doExit = true;
 
   // -- Do other stuff while waiting for threads to exit on their own
   // Move any captures into a session folder
@@ -689,17 +694,17 @@ void cleanup()
 
   // Ensure Motor Threads ended
   int r = 0;
-  while ((!motorA.finished || !motorB.finished) && r < 4000) {
+  while ((!motorL.finished || !motorR.finished) && r < 4000) {
     usleep(500);
     ++r;
   }
 
   // Check thread-hanging timeout conditions
-  if (motorA.finished) {
+  if (motorL.finished) {
     ROS_INFO("Trouble shutting down MotorA-Thread");
     // TODO pthread_abort handling
   }
-  if (motorB.finished) {
+  if (motorR.finished) {
     ROS_INFO("Trouble shutting down MotorB-Thread");
     // TODO pthread_abort handling
   }
@@ -717,6 +722,7 @@ void cleanup()
 
   // GPIO::cleanup(19);
   // GPIO::cleanup(13);
+  GPIO::cleanup(GPIO_NRF_IRQ);
   gpio_unexport(GPIO_NRF_SS);
   gpio_unexport(GPIO_NRF_CE);
 }

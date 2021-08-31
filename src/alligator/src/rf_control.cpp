@@ -83,21 +83,19 @@ enum ControllerModeType {
 };
 // END-SECTION
 // Speed in mm per second
-#define MOTOR_SET_SPEED_1 200
-#define MOTOR_SET_SPEED_2 400
-#define MOTOR_SET_SPEED_3 600
-#define MOTOR_SET_SPEED_4 800
-#define MOTOR_SET_SPEED_5 2000
+#define MOTOR_SET_SPEED_1 250
+#define MOTOR_SET_SPEED_2 500
+#define MOTOR_SET_SPEED_3 750
+#define MOTOR_SET_SPEED_4 1000
+#define MOTOR_SET_SPEED_5 1250
 
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_channel, dir_channel;
   std::atomic<float> power, est_speed; // in mm per second -- running average
   int dir;
-  std::atomic<unsigned int> enc_register;
-  bool doExit;
-  bool doPause;
-  bool finished;
+  std::atomic_uint32_t enc_register;
+  std::atomic_bool doPause, doExit, finished;
   const char *name;
 } MotorThreadData;
 
@@ -152,13 +150,15 @@ void *motorThread(void *arg)
   // DEBUG
 
   const unsigned int BIN_SIZE = 25;
+  const int SLEEP_PERIOD = 40; // in ms
+  const float CYCLE_PERIOD = 0.001f * SLEEP_PERIOD * BIN_SIZE;
   // struct {
   //   float signals;
   // } samples[20];
   unsigned int sigbin[BIN_SIZE], si = 0, sigtot = 0, diff;
   memset(sigbin, 0, sizeof(sigbin));
 
-  float prev_error = 0, error = 0, int_err = 0, dt_err = 0;
+  float prev_error = -500, error = 0, int_err = 0, dt_err = 0;
 
   // struct timespec start_time;
   // clock_gettime(CLOCK_REALTIME, &start_time);
@@ -167,7 +167,7 @@ void *motorThread(void *arg)
     pwm.ChangeDutyCycle(duty_cycle);
 
     // Sleep
-    usleep(40000);
+    usleep(SLEEP_PERIOD * 1000);
 
     if (m->doPause) {
       pwm.ChangeDutyCycle(0);
@@ -201,7 +201,7 @@ void *motorThread(void *arg)
 
     // Estimate speed in mm.s-1
     // -- 225 encoder signals per turn - 30cm per turn : 1.2 mm per signal
-    m->est_speed = 1.2f * sigtot / (BIN_SIZE * 0.04f);
+    m->est_speed = 1.2f * sigtot / CYCLE_PERIOD;
 
     if (m->dir != setDir) {
       // Wrong way
@@ -220,25 +220,26 @@ void *motorThread(void *arg)
     float error = m->est_speed - target_speed;
 
     // Proportional
-    float pe = -error * 0.0018f;
+    float pe = -error * 0.0015f;
 
     // Integral
-    int_err = int_err * 0.95f + error;
+    int_err = int_err * 0.9f + error;
     float ie = -int_err * 0.00005f;
 
     // Derivative Error
-    dt_err = 0.95f * (error - prev_error);
+    dt_err = error - prev_error;
     prev_error = error;
     float de = -dt_err * 0.02f;
 
     // DEBUG
-    // if (!strcmp(m->name, "MotorL")) {
-    if (si % 12 == 0) {
+    if (!strcmp(m->name, "MotorL")) {
+      // if (si % 12 == 0) {
       // ROS_INFO("Speed: motorL:[%i]%.2f(%.2f) motorR:%.2f(%.2f)", power, motorL.est_speed, motorL.target_speed,
       //          motorR.est_speed, motorR.target_speed);
       float est_speed = m->est_speed;
-      printf("%s] DC:%.0f tar:%.2f est:%.2f err:%.2f > P:%.2f IE:%.2f DE:%.2f Dir:%i\n", m->name, duty_cycle,
+      printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f IE:%.2f DE:%.2f Dir:%i\n", m->name, duty_cycle,
              target_speed, est_speed, error, pe, ie, de, m->dir);
+      // }
     }
     // DEBUG
 
@@ -291,7 +292,7 @@ void changeMode(enum ControllerModeType mode)
     motorL.power = 1;
     motorL.dir = 1;
     motorR.power = 1;
-    motorR.dir = 0;
+    motorR.dir = 1;
   }
 
   current_mode = mode;
@@ -424,7 +425,7 @@ void transferSessionCaptures()
 bool setup(ros::NodeHandle &nh)
 {
   current_mode = CONTROLLER_MODE_AUTONOMOUS;
-  max_speed = MOTOR_SET_SPEED_5;
+  max_speed = MOTOR_SET_SPEED_1;
 
   // Image Saver
   save_image_client = nh.serviceClient<std_srvs::Empty>("/image_view/save");
@@ -657,7 +658,7 @@ void loop()
 
           // In Packets Expecting Confirmation PacketUID is in the +1 position
           data[SIG_LEN] = confirmPacketUID;
-          ROS_INFO("Sent Confirm %u", confirmPacketUID);
+          // ROS_INFO("Sent Confirm %u", confirmPacketUID);
 
           nrf24.send(data, sizeof(data));
           nrf24.waitPacketSent();

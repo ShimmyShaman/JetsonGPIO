@@ -35,6 +35,8 @@
 
 #include "std_srvs/Empty.h"
 
+#include "kann/kann.h"
+
 #define GPIO_LIFT 29    /*149*/
 #define GPIO_ROTATER 31 /*200*/
 #define GPIO_APWR 32    /*168*/
@@ -43,8 +45,8 @@
 #define GPIO_BDIR 35    /*76*/
 #define GPIO_UNUSED 37  /*12*/
 
-#define GPIO_AENC 7  /*216*/
-#define GPIO_BENC 11 /*50*/
+#define GPIO_LENC 7  /*216*/
+#define GPIO_RENC 11 /*50*/
 
 #define GPIO_NRF_CE 13  // 22  /*13*/
 #define GPIO_NRF_SS 19  // 24  /*19*/
@@ -83,11 +85,12 @@ enum ControllerModeType {
 };
 // END-SECTION
 // Speed in mm per second
-#define MOTOR_SET_SPEED_1 250
-#define MOTOR_SET_SPEED_2 500
-#define MOTOR_SET_SPEED_3 750
-#define MOTOR_SET_SPEED_4 1000
-#define MOTOR_SET_SPEED_5 1250
+#define MOTOR_SET_SPEED_1 150
+#define MOTOR_SET_SPEED_2 225
+#define MOTOR_SET_SPEED_3 300
+#define MOTOR_SET_SPEED_4 450
+#define MOTOR_SET_SPEED_5 1200
+#define MOTOR_SPEED_MAX MOTOR_SET_SPEED_5
 
 typedef struct MotorThreadData {
   pthread_t tid;
@@ -97,6 +100,11 @@ typedef struct MotorThreadData {
   std::atomic_uint32_t enc_register;
   std::atomic_bool doPause, doExit, finished;
   const char *name;
+  struct {
+    std::atomic_int iterations_left;
+    float est_speeds[250];
+    std::atomic_bool completed;
+  } debug;
 } MotorThreadData;
 
 MotorThreadData motorL, motorR;
@@ -124,10 +132,10 @@ std_srvs::Empty empty_msg;
 void motor_encoding_signal_callback(int channel)
 {
   switch (channel) {
-    case GPIO_AENC:
+    case GPIO_LENC:
       ++motorL.enc_register;
       break;
-    case GPIO_BENC:
+    case GPIO_RENC:
       ++motorR.enc_register;
       break;
   }
@@ -149,7 +157,7 @@ void *motorThread(void *arg)
   int dn = 0;
   // DEBUG
 
-  const unsigned int BIN_SIZE = 25;
+  const unsigned int BIN_SIZE = 15;
   const int SLEEP_PERIOD = 40; // in ms
   const float CYCLE_PERIOD = 0.001f * SLEEP_PERIOD * BIN_SIZE;
   // struct {
@@ -159,12 +167,19 @@ void *motorThread(void *arg)
   memset(sigbin, 0, sizeof(sigbin));
 
   float prev_error = -500, error = 0, int_err = 0, dt_err = 0;
+  float prev_power = 0;
 
   // struct timespec start_time;
   // clock_gettime(CLOCK_REALTIME, &start_time);
+  kann_t *ann;
 
   while (!m->doExit) {
     pwm.ChangeDutyCycle(duty_cycle);
+
+    {
+      // Stop this from continuing on if main thread collapses
+      // Not implemented atm -- maybe not at all
+    }
 
     // Sleep
     usleep(SLEEP_PERIOD * 1000);
@@ -175,10 +190,24 @@ void *motorThread(void *arg)
       // ensure_set_value(m->drive_channel, 0);
       continue;
     }
-    else {
-      // Stop this from continuing on if main thread collapses
-      // Not implemented atm -- maybe not at all
+    if (!m->power) {
+      duty_cycle = 0;
+      prev_power = 0.0;
+      continue;
     }
+    if (!prev_power) {
+      duty_cycle = 100.0 * m->power * (double)max_speed / MOTOR_SPEED_MAX;
+
+      // Clear Sampling
+      for (si = 0; si < BIN_SIZE; ++si)
+        sigbin[si] = 0;
+
+      prev_enc_sig = m->enc_register;
+      sigtot = 0;
+      int_err = 0;
+      prev_error = -m->power * max_speed;
+    }
+    prev_power = m->power;
 
     // DEBUG
     // int c = !strcmp(m->name, "MotorL");
@@ -207,11 +236,6 @@ void *motorThread(void *arg)
       // Wrong way
       setDir = m->dir;
       GPIO::output(m->dir_channel, setDir);
-      duty_cycle = 0;
-      continue;
-    }
-    else if (!m->power) {
-      duty_cycle = 0;
       continue;
     }
 
@@ -220,19 +244,26 @@ void *motorThread(void *arg)
     float error = m->est_speed - target_speed;
 
     // Proportional
-    float pe = -error * 0.0015f;
+    float pe = -error * 0.0022f;
 
     // Integral
-    int_err = int_err * 0.9f + error;
-    float ie = -int_err * 0.00005f;
+    int_err = int_err * 0.85f + error; //(error < 0 ? -1.f : 1.f) * error * error;
+    float ie = -int_err * 0.000085f;
 
     // Derivative Error
     dt_err = error - prev_error;
     prev_error = error;
-    float de = -dt_err * 0.02f;
+    float de = -dt_err * 0.027f;
 
     // DEBUG
     if (!strcmp(m->name, "MotorL")) {
+      if (m->debug.iterations_left) {
+        --m->debug.iterations_left;
+        if (!m->debug.iterations_left)
+          m->power = 0;
+
+        m->debug.est_speeds[m->debug.iterations_left] = m->est_speed;
+      }
       // if (si % 12 == 0) {
       // ROS_INFO("Speed: motorL:[%i]%.2f(%.2f) motorR:%.2f(%.2f)", power, motorL.est_speed, motorL.target_speed,
       //          motorR.est_speed, motorR.target_speed);
@@ -422,6 +453,10 @@ void transferSessionCaptures()
   }
 }
 
+int debug_speeds[] = {100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200};
+int debug_index = 0;
+uint64_t next_debug_time;
+
 bool setup(ros::NodeHandle &nh)
 {
   current_mode = CONTROLLER_MODE_AUTONOMOUS;
@@ -481,8 +516,8 @@ bool setup(ros::NodeHandle &nh)
   GPIO::setup(GPIO_BDIR, GPIO::Directions::OUT);
   GPIO::setup(GPIO_BPWR, GPIO::Directions::OUT);
 
-  GPIO::setup(GPIO_AENC, GPIO::Directions::IN);
-  GPIO::setup(GPIO_BENC, GPIO::Directions::IN);
+  GPIO::setup(GPIO_LENC, GPIO::Directions::IN);
+  GPIO::setup(GPIO_RENC, GPIO::Directions::IN);
 
   // Begin Motor Threads
   int rc;
@@ -519,8 +554,12 @@ bool setup(ros::NodeHandle &nh)
     return EXIT_FAILURE;
   }
 
-  GPIO::add_event_detect(GPIO_AENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
-  GPIO::add_event_detect(GPIO_BENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
+  GPIO::add_event_detect(GPIO_LENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
+  GPIO::add_event_detect(GPIO_RENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
+
+  // DEBUG
+  next_debug_time = millis() + 4000;
+  // DEBUG
 
   return true;
 }
@@ -528,6 +567,79 @@ bool setup(ros::NodeHandle &nh)
 void loop()
 {
   uint64_t time = millis();
+
+  // DEBUG
+  if (time >= next_debug_time) {
+    const int ITERATION_COUNT = 200;
+    if (debug_index) {
+      // Analyse the previous data
+      // -- Time to reach target
+      float target_speed = (float)debug_speeds[debug_index - 1];
+      float target_min = target_speed - 10.f - 0.05f * target_speed;
+      float target_max = target_speed + 10.f + 0.05f * target_speed;
+
+      int iterations_to_target = 0;
+      float reach_peak_value = 0.f;
+      int reach_peak_iter = 0;
+      float cumulative = 0.f;
+      int iterations_within_target_range = 0;
+
+      for (int i = ITERATION_COUNT - 1; i >= 0; --i) {
+        int invi = ITERATION_COUNT - 1 - i;
+        float iv = motorL.debug.est_speeds[i];
+
+        if (!iterations_to_target) {
+          if (iv >= target_min && iv < target_max)
+            iterations_to_target = invi;
+          reach_peak_value = iv;
+        }
+        else if (!reach_peak_iter) {
+          if (iv >= reach_peak_value) {
+            reach_peak_value = iv;
+          }
+          else {
+            reach_peak_iter = invi;
+          }
+        }
+
+        cumulative += iv;
+
+        if (iv >= target_min && iv < target_max)
+          ++iterations_within_target_range;
+      }
+
+      float mean = cumulative / ITERATION_COUNT;
+      float variance_total = 0.f;
+      for (int i = 0; i < ITERATION_COUNT; ++i) {
+        variance_total += (motorL.debug.est_speeds[i] - mean) * (motorL.debug.est_speeds[i] - mean);
+      }
+      float std_dev = sqrtf(variance_total / ITERATION_COUNT);
+
+      printf("\n### Statistics ###\n"
+             "--Target Speed: %.1f\n"
+             "--ITERATION_COUNT to Target: %i\n"
+             "--ITERATION_COUNT to Peak: %i\n"
+             "--Peak After Target Reach: %.1f\n"
+             "--Average Speed: %.1f\n"
+             "--Std. Deviation: %.1f\n"
+             "--Percent Time in Target Range: %.1f\n",
+             target_speed, iterations_to_target, reach_peak_iter, reach_peak_value, mean, std_dev,
+             100.f * iterations_within_target_range / ITERATION_COUNT);
+    }
+
+    // Begin Next
+    if (debug_index >= sizeof(debug_speeds) / sizeof(debug_speeds[0])) {
+      shutdown_requested = true;
+      return;
+    }
+
+    printf("#######################\n\nTesting speed: %i\n", debug_speeds[debug_index]);
+    motorL.debug.iterations_left = ITERATION_COUNT;
+    motorL.power = 1.0f;
+    max_speed = debug_speeds[debug_index++];
+    next_debug_time = time + 12000;
+  }
+  // DEBUG
 
   //   // nrf24.waitPacketSent();
   //   // Now wait for a reply
@@ -587,7 +699,7 @@ void loop()
               // Because the motors are orientated in opposite directions
               //  (one pointed towards left, other right)
               motorL.dir = jx > MID ? 1 : 0;
-              motorR.dir = jy > MID ? 0 : 1;
+              motorR.dir = jy > MID ? 1 : 0;
 
               motorL.power = abs((jx - MID) * 1.05f) / MID;
               if (motorL.power > 1.f)
@@ -711,8 +823,8 @@ void cleanup()
   }
 
   // Unexport gpios
-  GPIO::cleanup(GPIO_AENC);
-  GPIO::cleanup(GPIO_BENC);
+  GPIO::cleanup(GPIO_LENC);
+  GPIO::cleanup(GPIO_RENC);
 
   GPIO::cleanup(GPIO_LIFT);
   GPIO::cleanup(GPIO_ROTATER);
@@ -748,8 +860,13 @@ int main(int argc, char **argv)
   image_transport::Subscriber sub = it.subscribe("jetcam/image", 1, jetcamImageCallback);
 
   ros::Rate loop_rate(8);
-  while (ros::ok() && !shutdown_requested) {
+  while (ros::ok()) {
     loop();
+    if (shutdown_requested) {
+      ros::shutdown();
+      break;
+    }
+
     loop_rate.sleep();
     ros::spinOnce();
     // ROS_INFO("captureImageState=%i", captureImageState);
@@ -759,7 +876,8 @@ int main(int argc, char **argv)
   cleanup();
 
   if (shutdown_requested) {
-    system("shutdown -P now");
+    // DEBUG TODO
+    // system("shutdown -P now");
   }
 
   ROS_INFO("rf_control Exited");

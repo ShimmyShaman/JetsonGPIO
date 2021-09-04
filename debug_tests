@@ -1,0 +1,118 @@
+####### With Initial Boost ######
+### Statistics ###
+--Target Speed: 100.0
+--ITERATION_COUNT to Target: 23
+--ITERATION_COUNT to Peak: 34
+--Peak After Target Reach: 182.0
+--Average Speed: 91.2
+--Std. Deviation: 63.5
+--Percent Time in Target Range: 18.0
+#######################
+--Target Speed: 200.0
+--ITERATION_COUNT to Target: 10
+--ITERATION_COUNT to Peak: 21
+--Peak After Target Reach: 416.0
+--Average Speed: 203.2
+--Std. Deviation: 113.3
+--Percent Time in Target Range: 8.5
+#######################
+--Target Speed: 300.0
+--ITERATION_COUNT to Target: 9
+--ITERATION_COUNT to Peak: 20
+--Peak After Target Reach: 672.0
+--Average Speed: 307.8
+--Std. Deviation: 134.8
+--Percent Time in Target Range: 13.5
+#######################
+--Target Speed: 400.0
+--ITERATION_COUNT to Target: 10
+--ITERATION_COUNT to Peak: 20
+--Peak After Target Reach: 812.0
+--Average Speed: 418.3
+--Std. Deviation: 133.5
+--Percent Time in Target Range: 27.5
+#######################
+--Target Speed: 500.0
+--ITERATION_COUNT to Target: 11
+--ITERATION_COUNT to Peak: 20
+--Peak After Target Reach: 854.0
+--Average Speed: 525.0
+--Std. Deviation: 128.1
+--Percent Time in Target Range: 75.5
+#######################
+--Target Speed: 600.0
+--ITERATION_COUNT to Target: 11
+--ITERATION_COUNT to Peak: 19
+--Peak After Target Reach: 952.0
+--Average Speed: 631.4
+--Std. Deviation: 144.9
+--Percent Time in Target Range: 67.5
+#######################
+--Target Speed: 700.0
+--ITERATION_COUNT to Target: 12
+--ITERATION_COUNT to Peak: 20
+--Peak After Target Reach: 974.0
+--Average Speed: 733.7
+--Std. Deviation: 155.3
+--Percent Time in Target Range: 65.0
+#######################
+--Target Speed: 800.0
+--ITERATION_COUNT to Target: 13
+--ITERATION_COUNT to Peak: 20
+--Peak After Target Reach: 982.0
+--Average Speed: 832.7
+--Std. Deviation: 158.9
+--Percent Time in Target Range: 43.5
+#######################
+--Target Speed: 900.0
+--ITERATION_COUNT to Target: 14
+--ITERATION_COUNT to Peak: 24
+--Peak After Target Reach: 1042.0
+--Average Speed: 916.6
+--Std. Deviation: 168.3
+--Percent Time in Target Range: 49.5
+#######################
+--Target Speed: 1000.0
+--ITERATION_COUNT to Target: 16
+--ITERATION_COUNT to Peak: 18
+--Peak After Target Reach: 994.0
+--Average Speed: 978.3
+--Std. Deviation: 180.6
+--Percent Time in Target Range: 92.0
+#######################
+--Target Speed: 1100.0
+--ITERATION_COUNT to Target: 17
+--ITERATION_COUNT to Peak: 20
+--Peak After Target Reach: 1062.0
+--Average Speed: 1003.5
+--Std. Deviation: 186.1
+--Percent Time in Target Range: 79.0
+#######################
+--Target Speed: 1200.0
+--ITERATION_COUNT to Target: 0
+--ITERATION_COUNT to Peak: 0
+--Peak After Target Reach: 1060.0
+--Average Speed: 1001.7
+--Std. Deviation: 180.3
+--Percent Time in Target Range: 0.0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

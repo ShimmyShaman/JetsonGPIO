@@ -182,6 +182,8 @@ void *motorThread(void *arg)
   // neural::MeanSquaredError<neural::Derivative, outputSize, batchSize> error;
   // DEBUG
 
+  float switch_rate = 0.1f, swr = 0.f;
+  bool est_below_tar = true;
   while (!m->doExit) {
     pwm.ChangeDutyCycle(duty_cycle);
 
@@ -258,7 +260,7 @@ void *motorThread(void *arg)
     // Rate of Change Exponential
     // -- Make the modification by the proportional adjustment component related by a factor
     // -- of the distance between est. & target speeds.
-    float exp_mult = MAX(1.f, pow(abs(target_speed - m->est_speed) / 100.f, 1.3f));
+    float exp_mult = MAX(1.f, 1.f + (pow(abs(target_speed - m->est_speed) / 100.f, 2.2f) - 1.f) * 0.2f);
     pe *= exp_mult;
 
     // Integral
@@ -269,6 +271,15 @@ void *motorThread(void *arg)
     dt_err = error - prev_error;
     prev_error = error;
     float de = -dt_err * 0.027f;
+
+    // Oscillation Prevention
+    switch_rate = MIN(1.f, switch_rate * 0.995f + 0.05f * swr);
+    swr *= 0.95f;
+    if ((m->est_speed < target_speed) != est_below_tar) {
+      est_below_tar = !est_below_tar;
+      swr += 0.25f;
+    }
+    float swm = 1.f - pow(switch_rate, 3.2f);
 
     // DEBUG
     if (!strcmp(m->name, "MotorL")) {
@@ -283,19 +294,18 @@ void *motorThread(void *arg)
       // ROS_INFO("Speed: motorL:[%i]%.2f(%.2f) motorR:%.2f(%.2f)", power, motorL.est_speed, motorL.target_speed,
       //          motorR.est_speed, motorR.target_speed);
       float est_speed = m->est_speed;
-      printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i\n", m->name, duty_cycle,
-             target_speed, est_speed, error, pe, exp_mult, ie, de, m->dir);
+      printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i SWM:%.2f\n", m->name,
+             duty_cycle, target_speed, est_speed, error, pe, exp_mult, ie, de, m->dir, swm);
       // }
     }
     // DEBUG
 
     // Update & Clamp
-    duty_cycle += exp_mult * (double)(pe + ie + de);
+    duty_cycle += (double)(swm * (pe + ie + de));
     if (duty_cycle > 100)
       duty_cycle = 100;
     else if (duty_cycle < 0)
       duty_cycle = 0;
-    // duty_cycle = 0;
   }
 
   pwm.stop();
@@ -814,10 +824,10 @@ void loop()
     }
   }
 
-  motorL.power = 1.f;
+  // motorL.power = 1.f;
   // motorR.power = 1.f;
-  if (!rotator_active) {
-  // if (rotator_active != (motorL.power || motorR.power)) {
+  // if (!rotator_active) {
+  if (rotator_active != (motorL.power || motorR.power)) {
     rotator_active = !rotator_active;
 
     GPIO::output(GPIO_ROTATER, rotator_active ? GPIO::HIGH : GPIO::LOW);

@@ -17,6 +17,7 @@
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -182,6 +183,9 @@ void *motorThread(void *arg)
   // neural::MeanSquaredError<neural::Derivative, outputSize, batchSize> error;
   // DEBUG
 
+  struct timespec tt, tc;
+  clock_gettime(CLOCK_MONOTONIC, &tt);
+
   float switch_rate = 0.1f, swr = 0.f;
   bool est_below_tar = true;
   while (!m->doExit) {
@@ -193,7 +197,17 @@ void *motorThread(void *arg)
     }
 
     // Sleep
-    usleep(SLEEP_PERIOD * 1000);
+    tt.tv_nsec += SLEEP_PERIOD * 1e6;
+    while (tt.tv_nsec >= 1e9) {
+      tt.tv_nsec -= (long)1e9;
+      ++tt.tv_sec;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &tc);
+    int ud = 1000 * (1e3 * (tt.tv_sec - tc.tv_sec) + 1e-6 * (tt.tv_nsec - tc.tv_nsec));
+    // if (!strcmp(m->name, "MotorL"))
+    //   printf("%i = %.2f + %.2f\n", ud, 1e3 * (tt.tv_sec - tc.tv_sec), 1e-6 * (tt.tv_nsec - tc.tv_nsec));
+    if (ud > 0)
+      usleep(ud);
 
     if (m->doPause) {
       pwm.ChangeDutyCycle(0);
@@ -255,17 +269,17 @@ void *motorThread(void *arg)
     float error = m->est_speed - target_speed;
 
     // Proportional
-    float pe = -error * 0.0022f;
+    float pe = -error * 0.0025f;
 
     // Rate of Change Exponential
     // -- Make the modification by the proportional adjustment component related by a factor
     // -- of the distance between est. & target speeds.
-    float exp_mult = MAX(1.f, 1.f + (pow(abs(target_speed - m->est_speed) / 100.f, 2.2f) - 1.f) * 0.2f);
+    float exp_mult = MAX(1.f, 1.f + (pow(abs(target_speed - m->est_speed) / 100.f, 2.2f) - 1.f) * 0.3f);
     pe *= exp_mult;
 
     // Integral
-    int_err = int_err * 0.85f + error; //(error < 0 ? -1.f : 1.f) * error * error;
-    float ie = -int_err * 0.000115f;
+    int_err = int_err * 0.90f + error; //(error < 0 ? -1.f : 1.f) * error * error;
+    float ie = -int_err * 0.000235f;
 
     // Derivative Error
     dt_err = error - prev_error;
@@ -277,9 +291,9 @@ void *motorThread(void *arg)
     swr *= 0.95f;
     if ((m->est_speed < target_speed) != est_below_tar) {
       est_below_tar = !est_below_tar;
-      swr += 0.25f;
+      swr += 0.13f;
     }
-    float swm = 1.f - pow(switch_rate, 3.2f);
+    float swm = MAX(1.f - pow(switch_rate, 3.2f), pow(abs(target_speed - m->est_speed) / 400, 2.f));
 
     // DEBUG
     if (!strcmp(m->name, "MotorL")) {
@@ -293,9 +307,9 @@ void *motorThread(void *arg)
       // if (si % 12 == 0) {
       // ROS_INFO("Speed: motorL:[%i]%.2f(%.2f) motorR:%.2f(%.2f)", power, motorL.est_speed, motorL.target_speed,
       //          motorR.est_speed, motorR.target_speed);
-      float est_speed = m->est_speed;
+      float esp = m->est_speed;
       printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i SWM:%.2f\n", m->name,
-             duty_cycle, target_speed, est_speed, error, pe, exp_mult, ie, de, m->dir, swm);
+             duty_cycle, target_speed, esp, error, pe, exp_mult, ie, de, m->dir, swm);
       // }
     }
     // DEBUG

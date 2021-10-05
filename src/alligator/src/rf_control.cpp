@@ -86,11 +86,11 @@ enum ControllerModeType {
 };
 // END-SECTION
 // Speed in mm per second
-#define MOTOR_SET_SPEED_1 250
-#define MOTOR_SET_SPEED_2 375
-#define MOTOR_SET_SPEED_3 475
-#define MOTOR_SET_SPEED_4 600
-#define MOTOR_SET_SPEED_5 1200
+#define MOTOR_SET_SPEED_1 360
+#define MOTOR_SET_SPEED_2 480
+#define MOTOR_SET_SPEED_3 600
+#define MOTOR_SET_SPEED_4 720
+#define MOTOR_SET_SPEED_5 1800
 #define MOTOR_SPEED_MAX MOTOR_SET_SPEED_5
 
 typedef struct MotorThreadData {
@@ -186,8 +186,8 @@ void *motorThread(void *arg)
   struct timespec tt, tc;
   clock_gettime(CLOCK_MONOTONIC, &tt);
 
-  float switch_rate = 0.1f, swr = 0.f;
-  bool est_below_tar = true;
+  float switch_rate = 0.1f, swr;
+  bool dc_asc = true;
   while (!m->doExit) {
     pwm.ChangeDutyCycle(duty_cycle);
 
@@ -231,6 +231,7 @@ void *motorThread(void *arg)
       sigtot = 0;
       int_err = 0;
       prev_error = -m->power * max_speed;
+      swr = 0.3f;
     }
     prev_power = m->power;
 
@@ -261,6 +262,7 @@ void *motorThread(void *arg)
       // Wrong way
       setDir = m->dir;
       GPIO::output(m->dir_channel, setDir);
+      swr = 0.3f;
       continue;
     }
 
@@ -274,7 +276,7 @@ void *motorThread(void *arg)
     // Rate of Change Exponential
     // -- Make the modification by the proportional adjustment component related by a factor
     // -- of the distance between est. & target speeds.
-    float exp_mult = MAX(1.f, 1.f + (pow(abs(target_speed - m->est_speed) / 100.f, 2.2f) - 1.f) * 0.3f);
+    float exp_mult = MAX(1.f, 1.f + (pow(abs(target_speed - m->est_speed) / 220.f, 2.2f) - 1.f) * 0.07f);
     pe *= exp_mult;
 
     // Integral
@@ -287,13 +289,16 @@ void *motorThread(void *arg)
     float de = -dt_err * 0.027f;
 
     // Oscillation Prevention
+    // -- Prevent duty-cycle from rapidly going up and down too often
+    float dc_delta = (pe + ie + de);
     switch_rate = MIN(1.f, switch_rate * 0.995f + 0.05f * swr);
     swr *= 0.95f;
-    if ((m->est_speed < target_speed) != est_below_tar) {
-      est_below_tar = !est_below_tar;
+    if ((dc_delta > 0) != dc_asc) {
+      dc_asc = !dc_asc;
       swr += 0.13f;
     }
-    float swm = MAX(1.f - pow(switch_rate, 3.2f), pow(abs(target_speed - m->est_speed) / 400, 2.f));
+    float swm = MAX(1.f - pow(switch_rate, 2.8f), pow(abs(target_speed - m->est_speed) / 1600, 2.f));
+    // dc_delta *= swm;
 
     // DEBUG
     if (!strcmp(m->name, "MotorL")) {
@@ -304,22 +309,42 @@ void *motorThread(void *arg)
 
         m->debug.est_speeds[m->debug.iterations_left] = m->est_speed;
       }
-      // if (si % 12 == 0) {
-      // ROS_INFO("Speed: motorL:[%i]%.2f(%.2f) motorR:%.2f(%.2f)", power, motorL.est_speed, motorL.target_speed,
-      //          motorR.est_speed, motorR.target_speed);
+
+      static int iter = 0;
+      static float terr = 0.f;
+      static float merr = 0.f;
+
       float esp = m->est_speed;
-      printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i SWM:%.2f\n", m->name,
-             duty_cycle, target_speed, esp, error, pe, exp_mult, ie, de, m->dir, swm);
+      // ++iter;
+      // terr += esp;
+      // merr = MAX(merr, esp);
+      // if (iter >= 800) {
+      //   printf("[RESULT]: Max.Err:%.0f Avg.Err: %.0f\n", merr, terr / iter);
+      //   shutdown_requested = true;
+      //   break;
       // }
+      // else {
+      if (si % 25 == 0) {
+        float mLpwr = motorL.power;
+        float mRpwr = motorR.power;
+        float mLest = motorL.est_speed;
+        float mRest = motorR.est_speed;
+        ROS_INFO("Speed: motorL:[%.2f]%.2f(%.2f) motorR:[%.2f]%.2f(%.2f)", mLpwr, mLest, mLpwr * max_speed,
+                 (float)mRpwr, mRest, mRpwr * max_speed);
+        // float esp = m->est_speed;
+        // printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i SWM:%.2f\n", m->name,
+        //        duty_cycle, target_speed, esp, error, pe, exp_mult, ie, de, m->dir, swm);
+      }
     }
     // DEBUG
 
     // Update & Clamp
-    duty_cycle += (double)(swm * (pe + ie + de));
+    duty_cycle += (double)dc_delta;
     if (duty_cycle > 100)
       duty_cycle = 100;
     else if (duty_cycle < 0)
       duty_cycle = 0;
+    // duty_cycle = 0;
   }
 
   pwm.stop();

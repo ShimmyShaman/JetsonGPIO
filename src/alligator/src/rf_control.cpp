@@ -315,24 +315,25 @@ void *motorThread(void *arg)
       static float merr = 0.f;
 
       float esp = m->est_speed;
-      ++iter;
-      terr += esp;
-      merr = MAX(merr, esp);
-      if (iter >= 800) {
-        printf("[RESULT]: Max.Err:%.0f Avg.Err: %.0f\n", merr, terr / iter);
-        shutdown_requested = true;
-        break;
-      }
-      else {
-        // if (si % 25 == 0) {
-        //   float mLpwr = motorL.power;
-        //   float mRpwr = motorR.power;
-        //   float mLest = motorL.est_speed;
-        //   float mRest = motorR.est_speed;
-        //   ROS_INFO("Speed: motorL:[%.2f]%.2f(%.2f) motorR:[%.2f]%.2f(%.2f)", mLpwr, mLest, mLpwr * max_speed,
-        //            (float)mRpwr, mRest, mRpwr * max_speed);
-        printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i SWM:%.2f\n", m->name,
-               duty_cycle, target_speed, esp, error, pe, exp_mult, ie, de, m->dir, swm);
+      // ++iter;
+      // terr += esp;
+      // merr = MAX(merr, esp);
+      // if (iter >= 800) {
+      //   printf("[RESULT]: Max.Err:%.0f Avg.Err: %.0f\n", merr, terr / iter);
+      //   shutdown_requested = true;
+      //   break;
+      // }
+      // else {
+      if (si % 25 == 0) {
+        float mLpwr = motorL.power;
+        float mRpwr = motorR.power;
+        float mLest = motorL.est_speed;
+        float mRest = motorR.est_speed;
+        ROS_INFO("Speed: motorL:[%.2f]%.2f(%.2f) motorR:[%.2f]%.2f(%.2f)", mLpwr, mLest, mLpwr * max_speed,
+                 (float)mRpwr, mRest, mRpwr * max_speed);
+        // float esp = m->est_speed;
+        // printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i SWM:%.2f\n", m->name,
+        //        duty_cycle, target_speed, esp, error, pe, exp_mult, ie, de, m->dir, swm);
       }
     }
     // DEBUG
@@ -343,7 +344,7 @@ void *motorThread(void *arg)
       duty_cycle = 100;
     else if (duty_cycle < 0)
       duty_cycle = 0;
-    duty_cycle = 0;
+    // duty_cycle = 0;
   }
 
   pwm.stop();
@@ -862,10 +863,10 @@ void loop()
     }
   }
 
-  motorL.power = 1.f;
+  // motorL.power = 1.f;
   // motorR.power = 1.f;
-  if (!rotator_active) {
-    // if (rotator_active != (motorL.power || motorR.power)) {
+  // if (!rotator_active) {
+  if (rotator_active != (motorL.power || motorR.power)) {
     rotator_active = !rotator_active;
 
     GPIO::output(GPIO_ROTATER, rotator_active ? GPIO::HIGH : GPIO::LOW);
@@ -957,7 +958,7 @@ int main(int argc, char **argv)
 
   if (shutdown_requested) {
     // DEBUG TODO
-    // system("shutdown -P now");
+    system("shutdown -P now");
   }
 
   ROS_INFO("rf_control Exited");

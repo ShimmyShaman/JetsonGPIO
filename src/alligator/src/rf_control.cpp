@@ -36,7 +36,8 @@
 
 #include "std_srvs/Empty.h"
 
-// #include "neural/Neural.hpp"
+#define ENCODED_SPEED_MODE
+#define TEST_NOISE_MODE
 
 #define GPIO_ROTATER 29 /*200*/
 #define GPIO_LIFT 31    /*149*/
@@ -85,6 +86,7 @@ enum ControllerModeType {
   CONTROLLER_MODE_RCOVERRIDE = 5,
 };
 // END-SECTION
+#ifdef ENCODED_SPEED_MODE
 // Speed in mm per second
 #define MOTOR_SET_SPEED_1 360
 #define MOTOR_SET_SPEED_2 480
@@ -92,20 +94,31 @@ enum ControllerModeType {
 #define MOTOR_SET_SPEED_4 720
 #define MOTOR_SET_SPEED_5 1800
 #define MOTOR_SPEED_MAX MOTOR_SET_SPEED_5
+#else
+#define MOTOR_SET_SPEED_1 40
+#define MOTOR_SET_SPEED_2 55
+#define MOTOR_SET_SPEED_3 70
+#define MOTOR_SET_SPEED_4 85
+#define MOTOR_SET_SPEED_5 100
+#endif
 
 typedef struct MotorThreadData {
   pthread_t tid;
   unsigned int drive_channel, dir_channel;
-  std::atomic<float> power, est_speed; // in mm per second -- running average
   int dir;
-  std::atomic_uint32_t enc_register;
   std::atomic_bool doPause, doExit, finished;
   const char *name;
+  std::atomic<float> power; // in mm per second -- running average
+
+#ifdef ENCODED_SPEED_MODE
+  std::atomic<float> est_speed; // in mm per second -- running average
+  std::atomic_uint32_t enc_register;
   struct {
     std::atomic_int iterations_left;
     float est_speeds[250];
     std::atomic_bool completed;
   } debug;
+#endif
 } MotorThreadData;
 
 MotorThreadData motorL, motorR;
@@ -125,12 +138,14 @@ std::atomic<int> max_speed;
 
 // The mode (RCOverride or Autonomous)
 enum ControllerModeType current_mode;
+uint64_t last_com_time;
 
 bool shutdown_requested = false;
 ros::ServiceClient save_image_client;
 int captureImageState;
 std_srvs::Empty empty_msg;
 
+#ifdef ENCODED_SPEED_MODE
 void motor_encoding_signal_callback(int channel)
 {
   switch (channel) {
@@ -142,6 +157,7 @@ void motor_encoding_signal_callback(int channel)
       break;
   }
 }
+#endif
 
 void *motorThread(void *arg)
 {
@@ -149,45 +165,30 @@ void *motorThread(void *arg)
   ROS_INFO("%s thread opened!", m->name);
 
   int setDir = 99999;
-  unsigned int prev_enc_sig = 0U;
   double duty_cycle = 0;
 
   GPIO::PWM pwm(m->drive_channel, 50);
   pwm.start(0);
 
-  // DEBUG
-  int dn = 0;
-  // DEBUG
-
-  const unsigned int BIN_SIZE = 15;
   const int SLEEP_PERIOD = 40; // in ms
+
+#ifdef ENCODED_SPEED_MODE
+  const unsigned int BIN_SIZE = 15;
+  unsigned int prev_enc_sig = 0U;
   const float CYCLE_PERIOD = 0.001f * SLEEP_PERIOD * BIN_SIZE;
-  // struct {
-  //   float signals;
-  // } samples[20];
   unsigned int sigbin[BIN_SIZE], si = 0, sigtot = 0, diff;
   memset(sigbin, 0, sizeof(sigbin));
 
   float prev_error = -500, error = 0, int_err = 0, dt_err = 0;
   float prev_power = 0;
 
-  // struct timespec start_time;
-  // clock_gettime(CLOCK_REALTIME, &start_time);
-
-  // DEBUG
-  // auto net =
-  //     neural::make_net(neural::Linear<neural::Derivative, 12, 36, 1, true>(), neural::Relu<neural::Derivative, 36,
-  //     1>(),
-  //                      neural::Linear<neural::Derivative, 36, 24, 1>(), neural::Relu<neural::Derivative, 24, 1>());
-  // net.attachOptimizer(neural::OptimizerFactory::Adam(0.1));
-  // neural::MeanSquaredError<neural::Derivative, outputSize, batchSize> error;
-  // DEBUG
+  float switch_rate = 0.1f, swr;
+  bool dc_asc = true;
+#endif
 
   struct timespec tt, tc;
   clock_gettime(CLOCK_MONOTONIC, &tt);
 
-  float switch_rate = 0.1f, swr;
-  bool dc_asc = true;
   while (!m->doExit) {
     pwm.ChangeDutyCycle(duty_cycle);
 
@@ -217,9 +218,13 @@ void *motorThread(void *arg)
     }
     if (!m->power) {
       duty_cycle = 0;
+#ifdef ENCODED_SPEED_MODE
       prev_power = 0.0;
+#endif
       continue;
     }
+
+#ifdef ENCODED_SPEED_MODE
     if (!prev_power) {
       duty_cycle = 100.0 * m->power * (double)max_speed / MOTOR_SPEED_MAX;
 
@@ -257,7 +262,6 @@ void *motorThread(void *arg)
     // Estimate speed in mm.s-1
     // -- 225 encoder signals per turn - 31.459cm per turn : 1.4 mm per signal
     m->est_speed = 1.4f * sigtot / CYCLE_PERIOD;
-
     if (m->dir != setDir) {
       // Wrong way
       setDir = m->dir;
@@ -300,6 +304,7 @@ void *motorThread(void *arg)
     float swm = MAX(1.f - pow(switch_rate, 2.8f), pow(abs(target_speed - m->est_speed) / 1600, 2.f));
     // dc_delta *= swm;
 
+#ifdef TEST_NOISE_MODE
     // DEBUG
     if (!strcmp(m->name, "MotorL")) {
       if (m->debug.iterations_left) {
@@ -329,14 +334,15 @@ void *motorThread(void *arg)
         float mRpwr = motorR.power;
         float mLest = motorL.est_speed;
         float mRest = motorR.est_speed;
-        ROS_INFO("Speed: motorL:[%.2f]%.2f(%.2f) motorR:[%.2f]%.2f(%.2f)", mLpwr, mLest, mLpwr * max_speed,
-                 (float)mRpwr, mRest, mRpwr * max_speed);
+        // ROS_INFO("Speed: motorL:[%.2f]%.2f(%.2f) motorR:[%.2f]%.2f(%.2f)", mLpwr, mLest, mLpwr * max_speed,
+        //          (float)mRpwr, mRest, mRpwr * max_speed);
         // float esp = m->est_speed;
-        // printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i SWM:%.2f\n", m->name,
-        //        duty_cycle, target_speed, esp, error, pe, exp_mult, ie, de, m->dir, swm);
+        printf("%s] DC:%.1f tar:%.2f est:%.2f err:%.2f > P:%.2f(%.2f) IE:%.2f DE:%.2f Dir:%i SWM:%.2f\n", m->name,
+               duty_cycle, target_speed, esp, error, pe, exp_mult, ie, de, m->dir, swm);
       }
     }
-    // DEBUG
+// DEBUG
+#endif
 
     // Update & Clamp
     duty_cycle += (double)dc_delta;
@@ -344,7 +350,19 @@ void *motorThread(void *arg)
       duty_cycle = 100;
     else if (duty_cycle < 0)
       duty_cycle = 0;
-    // duty_cycle = 0;
+#ifdef TEST_NOISE_MODE
+    duty_cycle = 0;
+#endif
+#else
+    if (m->dir != setDir) {
+      // Wrong way
+      setDir = m->dir;
+      GPIO::output(m->dir_channel, setDir);
+      continue;
+    }
+
+    duty_cycle = m->power * max_speed;
+#endif
   }
 
   pwm.stop();
@@ -522,6 +540,41 @@ int debug_speeds[] = {100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1
 int debug_index = 0;
 uint64_t next_debug_time;
 
+// 200ms per retry
+bool init_nrf24(int retries)
+{
+  retries = 100;
+  while (true) {
+    if (!ros::ok() || shutdown_requested)
+      return false;
+
+    bool initialized = nrf24.init();
+    if (initialized) {
+      ROS_INFO("nrf24.init() succeeded");
+      break;
+    }
+    ROS_INFO("nrf24.init() failed");
+    --retries;
+    if (retries <= 0) {
+      ROS_INFO("nrf24.init() abandoned");
+      return false;
+    }
+    usleep(200000);
+  }
+
+  // Defaults after init are 2.402 GHz (channel 6), 2Mbps, 0dBm
+  if (!nrf24.setChannel(6)) {
+    ROS_INFO("nrf24.setChannel() failed");
+    return false;
+  }
+
+  if (!nrf24.setRF(RH_NRF24::DataRate2Mbps, RH_NRF24::TransmitPower0dBm)) {
+    ROS_INFO("nrf24.setRF() failed");
+    return false;
+  }
+  return true;
+}
+
 bool setup(ros::NodeHandle &nh)
 {
   current_mode = CONTROLLER_MODE_AUTONOMOUS;
@@ -541,36 +594,9 @@ bool setup(ros::NodeHandle &nh)
   // Begin RF Communication
   // Serial.begin(9600);
   ROS_INFO("initializing...");
-  bool scs;
-  int r = 100;
-  while (true) {
-    if (!ros::ok() || shutdown_requested)
-      return false;
-
-    scs = nrf24.init();
-    if (scs) {
-      ROS_INFO("nrf24.init() succeeded");
-      break;
-    }
-    ROS_INFO("nrf24.init() failed");
-    --r;
-    if (r < 0) {
-      ROS_INFO("nrf24.init() abandoned");
-      return false;
-    }
-    usleep(1000000);
-  }
-
-  // Defaults after init are 2.402 GHz (channel 6), 2Mbps, 0dBm
-  if (!nrf24.setChannel(6)) {
-    ROS_INFO("nrf24.setChannel() failed");
+  if (!init_nrf24(100))
     return false;
-  }
-
-  if (!nrf24.setRF(RH_NRF24::DataRate2Mbps, RH_NRF24::TransmitPower0dBm)) {
-    ROS_INFO("nrf24.setRF() failed");
-    return false;
-  }
+  last_com_time = millis();
 
   ROS_INFO("nrf24 initialization succeeded");
 
@@ -619,8 +645,10 @@ bool setup(ros::NodeHandle &nh)
     return EXIT_FAILURE;
   }
 
+#ifdef ENCODED_SPEED_MODE
   GPIO::add_event_detect(GPIO_LENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
   GPIO::add_event_detect(GPIO_RENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
+#endif
 
   // // DEBUG
   // next_debug_time = millis() + 4000;
@@ -732,6 +760,7 @@ void loop()
       }
       if (verified) {
         enum CommunicationType ct = (enum CommunicationType)buf[SIG_LEN];
+        last_com_time = time;
 
         bool replyComConfirm = true;
         __uint8_t confirmPacketUID = buf[SIG_LEN + 1];
@@ -863,10 +892,25 @@ void loop()
     }
   }
 
-  // motorL.power = 1.f;
+  if (time - last_com_time > 5000) {
+    if (time - last_com_time > 20000) {
+      if (init_nrf24(10)) {
+        last_com_time = time;
+      }
+      ROS_INFO("com absence: reinitialized nrf24");
+    }
+    else if (current_mode == CONTROLLER_MODE_RCOVERRIDE) {
+      motorL.power = motorR.power = 0.f;
+    }
+  }
+
+#ifdef TEST_NOISE_MODE
+  motorL.power = 1.f;
   // motorR.power = 1.f;
-  // if (!rotator_active) {
+  if (!rotator_active) {
+#else
   if (rotator_active != (motorL.power || motorR.power)) {
+#endif
     rotator_active = !rotator_active;
 
     GPIO::output(GPIO_ROTATER, rotator_active ? GPIO::HIGH : GPIO::LOW);

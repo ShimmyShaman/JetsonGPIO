@@ -1,5 +1,5 @@
-	3v3	17red	 8
-	MOSI	19blue	 6
-	MISO	21purple 4		2	22grey CE gpio13 
-	SCK	23white	 3		7	24brown	CS (gpio19)
+	3v3	17red	 2
+	MOSI	19blue	 6		8  18 IRQ
+	MISO	21purple 7		3	22grey CE gpio13 
+	SCK	23white	 5		4	24brown	CS (gpio19)
 	GND	25black	 1

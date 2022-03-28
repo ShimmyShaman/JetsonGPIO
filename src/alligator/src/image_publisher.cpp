@@ -32,8 +32,8 @@ bool createAndOpenCamera(gstCamera **pCamera, imageConverter *image_cvt)
   std::string resource_str = "csi://0";
   std::string codec_str = "";
 
-  int video_width = 1920;  // video_options.width;
-  int video_height = 1080; // video_options.height;
+  int video_width = 1280;  // video_options.width;
+  int video_height = 720; // video_options.height;
   if (resource_str.size() == 0) {
     ROS_ERROR("resource param wasn't set - please set the node's resource parameter to the input device/filename/URL");
     return false;

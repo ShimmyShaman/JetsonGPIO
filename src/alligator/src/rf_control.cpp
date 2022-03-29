@@ -148,24 +148,25 @@ int captureImageState;
 std_srvs::Empty empty_msg;
 
 #ifdef ENCODED_SPEED_MODE
-// void motor_encoding_signal_callback(const std::string& channel) {
-//     std::cout << "Callback called from channel " << channel;
+void motor_encoding_signal_callback(const std::string& channel) {
+    // std::cout << "Callback called from channel " << channel;
 
-//     int ich = atoi(channel.c_str());
-//     std::cout << " -- int value = " << ich << std::endl;
-// // }
-// // void motor_encoding_signal_callback(int channel)
-// // {
-//   switch (ich) {
-//     case GPIO_LENC:
-//       ++motorL.enc_register;
-//       printf("GPIO_LENC-callback\n");
-//       break;
-//     // case GPIO_RENC:
-//     //   ++motorR.enc_register;
-//     //   break;
-//   }
+    int ich = atoi(channel.c_str());
+    // std::cout << " -- int value = " << ich << std::endl;
 // }
+// void motor_encoding_signal_callback(int channel)
+// {
+  switch (ich) {
+    case GPIO_LENC:
+      ++motorL.enc_register;
+      // ROS_INFO("GPIO_LENC");
+      // printf("GPIO_LENC-callback\n");
+      break;
+    // case GPIO_RENC:
+    //   ++motorR.enc_register;
+    //   break;
+  }
+}
 #endif
 
 void *motorThread(void *arg)
@@ -677,7 +678,7 @@ bool setup(ros::NodeHandle &nh)
         // result = system(cbuf.c_str());
         // cbuf = format("cat %s/%s/edge", _SYSFS_ROOT, gpio_name.c_str());
         // result = system(cbuf.c_str());
-  // GPIO::add_event_detect(GPIO_LENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
+  GPIO::add_event_detect(GPIO_LENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
   // GPIO::add_event_detect(GPIO_RENC, GPIO::Edge::RISING, motor_encoding_signal_callback);
 #endif
 
@@ -1017,16 +1018,16 @@ int main(int argc, char **argv)
   image_transport::ImageTransport it(nh);
   image_transport::Subscriber sub = it.subscribe("jetcam/image", 1, jetcamImageCallback);
 
-        puts("direction216:");
-        int result = system("cat /sys/class/gpio/gpio216/direction");
-        printf("result0:%i\n", result);
-        puts("edge216:");
-        result = system("cat /sys/class/gpio/gpio216/edge");
-        printf("result0:%i\n", result);
-        puts("write-edge216:");
-        result = system("echo rising > /sys/class/gpio/gpio216/edge");
-        printf("result0:%i\n", result);
-        puts("edge216:");
+        // puts("direction216:");
+        // int result = system("cat /sys/class/gpio/gpio216/direction");
+        // printf("result0:%i\n", result);
+        // puts("edge216:");
+        // result = system("cat /sys/class/gpio/gpio216/edge");
+        // printf("result0:%i\n", result);
+        // puts("write-edge216:");
+        // result = system("echo rising > /sys/class/gpio/gpio216/edge");
+        // printf("result0:%i\n", result);
+        // puts("edge216:");
         // result = system("cat /sys/class/gpio/gpio216/edge");
         // printf("result0:%i\n", result);
 
@@ -1036,9 +1037,9 @@ int main(int argc, char **argv)
   while (ros::ok()) {
     loop();
 
-    ++loops;
-    if(loops % 8 == 0)
-      printf(">loop:%i<\n", loops);
+    // ++loops;
+    // if(loops % 8 == 0)
+    //   printf(">loop:%i<\n", loops);
     // int result = system("cat /sys/class/gpio/gpio216/value");
     
     if (exit_app_requested || shutdown_requested) {
